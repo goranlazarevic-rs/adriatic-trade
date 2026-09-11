@@ -1,0 +1,55 @@
+ADRIATIC TRADE — FINALNI POLISH v3.6
+
+ŠTA JE ISPRAVLJENO
+1. Početna / hero
+- Uklonjen je kolaž proizvoda preko fotografije koji je izgledao umetnuto.
+- Hero sada koristi jednu autentičnu aerial fotografiju Solane Nin.
+- Proizvodi više ne prelaze preko teksta.
+
+2. Kartice pojedinačnih proizvoda
+- Slike su zaključane u fiksan prostor i ne mogu preći u tekst.
+- Smanjene su maksimalne dimenzije packshotova.
+- Pozadina zone za proizvod je čista bela kako se ne bi videli pravougaoni rubovi fotografija.
+- Podešeno za desktop, tablet i mobilni prikaz.
+
+3. Paket ponude
+- Uklonjeni su improvizovani kolaži pakovanja.
+- Svaki paket sada ima jednu autentičnu premium fotografiju Solane Nin.
+- Sadržaj paketa je jasno prikazan kroz male oznake proizvoda.
+- Cene, uštede i CTA dugmad su zadržani.
+- Komplet Solana Nin ima posebnu pogodnost: besplatna dostava iako je cena 2.399 RSD.
+
+4. Autentične fotografije
+- Dodate i optimizovane fotografije ručne berbe, radnika, kristala u rukama, cveta soli i aerial snimaka Nina/Solane.
+- Fotografije su iskorišćene na početnoj, stranici Proizvodi i Solana Nin.
+
+5. Cene i korpa
+Finalne web cene su usklađene u HTML-u, JS korpi, checkout-u i JSON-LD podacima:
+- Cvet soli 100 g: 599 RSD
+- Cvet soli 125 g: 799 RSD
+- Sitna 600 g: 299 RSD
+- Krupna 600 g: 299 RSD
+- Sitna 500 g: 549 RSD
+
+Paket ponude:
+- Paket za probu: 1.149 RSD
+- Gurmanski paket: 1.849 RSD
+- Komplet Solana Nin: 2.399 RSD + besplatna dostava
+
+6. Tehnička kontrola
+- Ispravljeni SKU ključevi za paket ponude u JavaScript-u.
+- Ispravljena logika besplatne dostave za Komplet Solana Nin.
+- Cache verzija podignuta na v3.6.
+- Provereno 20 HTML stranica: nema nedostajućih lokalnih resursa.
+- JavaScript prolazi syntax check.
+
+UPLOAD NA GITHUB
+1. Raspakovati ZIP.
+2. Otvoriti postojeći repository adriatic-trade.
+3. Add file -> Upload files.
+4. Prevuci SADRŽAJ foldera adriatic-trade-site-v3.6 (ne sam folder).
+5. Commit directly to main.
+6. Poruka: Adriatic Trade website v3.6 final polish
+7. Posle 1-3 min otvoriti https://adriatictrade.rs i uraditi Ctrl+F5.
+
+DNS / CUSTOM DOMAIN / HTTPS NE MENJATI.
