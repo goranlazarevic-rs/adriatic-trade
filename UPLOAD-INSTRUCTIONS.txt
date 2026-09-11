@@ -1,0 +1,13 @@
+ADRIATIC TRADE v3.2 — UPLOAD
+
+1. Raspakujte ZIP.
+2. Otvorite postojeći GitHub repository adriatic-trade.
+3. Add file > Upload files.
+4. Prevucite CEO SADRŽAJ raspakovanog foldera, uključujući assets i proizvodi foldere.
+5. GitHub treba da zameni postojeće fajlove istim imenima i doda nove WebP slike.
+6. Commit message: Deploy Adriatic Trade v3.2
+7. Sačekajte Pages deployment.
+8. Otvorite https://adriatictrade.rs i uradite hard refresh (Ctrl+F5).
+9. Testirajte proizvod > Dodaj u korpu > Korpa > Checkout > probna porudžbina.
+
+VAŽNO: CNAME ostaje adriatictrade.rs. DNS i Outlook/Microsoft 365 zapise ne menjati.

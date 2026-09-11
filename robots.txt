@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
-
+Disallow: /checkout.html
+Disallow: /korpa.html
+Disallow: /hvala.html
 Sitemap: https://adriatictrade.rs/sitemap.xml

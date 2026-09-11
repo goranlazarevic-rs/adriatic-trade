@@ -1,14 +1,29 @@
-# Adriatic Trade website - v2
+# Adriatic Trade website v3.2
 
-Statički sajt spreman za GitHub Pages / custom domen `adriatictrade.rs`.
+Finalna conversion-first verzija sajta za Adriatic Trade d.o.o. i online prodaju proizvoda Solane Nin.
 
-## Asortiman u v2
-1. Cvet soli 100 g - natron kesa
-2. Cvet soli 125 g - premium kutija
-3. Nerafinisana sitna morska so 600 g ZIP
-4. Nerafinisana krupna morska so 600 g ZIP
-5. Nerafinisana sitna morska so 500 g - okrugla kutija sa poklopcem
+## Šta sadrži
+- novi Adriatic Trade logo
+- autentične fotografije Solane Nin, polja soli, berbe i porekla
+- 5 SKU proizvoda sa slikama iz dostavljenog kataloga
+- cene sa PDV-om
+- korpu i checkout
+- plaćanje pouzećem
+- dostavu 300 RSD ispod 2.500 RSD i besplatnu dostavu od 2.500 RSD
+- mogućnost označavanja paketomata kada je dostupan
+- email potvrdu porudžbine preko FormSubmit servisa
+- mobilni sticky CTA / dugme za poručivanje
+- SEO meta podatke, sitemap i strukturirane podatke
+- pravne stranice za online prodaju
 
-Ugrađene su stvarne fotografije koje je dostavio Adriatic Trade, a na detaljnim stranicama su dodate i fotografije proizvođača gde je dostupna odgovarajuća slika. Tekstovi su prošireni na osnovu zvaničnih opisa Solane Nin i deklaracionih/kataloških podataka za tržište Srbije.
+## Vizuelna logika
+Sajt je napravljen da istovremeno gradi brend i vodi ka porudžbini: prirodno poreklo, ručna berba, tradicija Solane Nin i jasni CTA elementi. Fotografije su optimizovane u WebP format radi brzine na mobilnim uređajima.
 
-Kontakt: +381 65 216 9764 / info@adriatictrade.rs
+## Pre objave
+1. Uploadovati ceo sadržaj foldera u postojeći GitHub repository `adriatic-trade`.
+2. Sačekati GitHub Pages deployment.
+3. Proveriti HTTPS.
+4. Napraviti probnu porudžbinu.
+5. Pri prvom slanju potvrditi FormSubmit aktivacioni email na `info@adriatictrade.rs`.
+6. Testirati email kupcu i email Adriatic Trade-u.
+7. Proveriti konačne deklaracije proizvoda pre komercijalnog puštanja.
