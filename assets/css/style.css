@@ -133,3 +133,12 @@
   .bundle-photo,.bundle-featured .bundle-photo{height:220px}
   .bundle-kicker{padding:18px 18px 9px}.bundle-body{padding:20px 18px 22px}
 }
+
+/* v3.6.1 — homepage product-card image alignment: keep weight badge fully visible */
+.product-grid-5 .product-badge{z-index:3}
+.product-grid-5 .product-img{padding-top:48px;padding-bottom:10px}
+.product-grid-5 .product-img img{max-height:160px;transform:translateY(6px)}
+@media (max-width:760px){
+  .product-grid-5 .product-img{padding-top:44px;padding-bottom:12px}
+  .product-grid-5 .product-img img{max-height:142px;transform:translateY(4px)}
+}

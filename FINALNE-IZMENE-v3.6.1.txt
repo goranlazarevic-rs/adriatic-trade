@@ -1,0 +1,1 @@
+v3.6.1: Spuštene slike proizvoda na početnoj kako oznake Premium/BIO i gramaža ostaju potpuno vidljive. Nije menjana veličina kartica, tekst, cene, paketi, korpa ili checkout.

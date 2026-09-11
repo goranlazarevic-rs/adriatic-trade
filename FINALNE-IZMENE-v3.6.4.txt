@@ -1,0 +1,22 @@
+ADRIATIC TRADE v3.6.4 — PAKET PONUDE
+
+1. GURMANSKI PAKET
+- 3 × BIO nerafinisana sitna morska so 600 g ZIP
+- 1 × Cvet soli 125 g
+- Redovna vrednost: 1.696 RSD
+- Popust: 7%
+- Paket cena: 1.577 RSD (zaokruženo na ceo dinar)
+- Ušteda: 119 RSD
+
+2. KOMPLET SOLANA NIN
+- 2 × BIO nerafinisana sitna morska so 500 g — kutija sa poklopcem
+- 1 × BIO nerafinisana krupna morska so 600 g ZIP
+- 1 × Cvet soli 125 g
+- Redovna vrednost: 2.196 RSD
+- Popust: 7%
+- Paket cena: 2.042 RSD (zaokruženo na ceo dinar)
+- Ušteda: 154 RSD
+
+3. Paket za probu ostaje nepromenjen.
+
+Ažurirani su index.html, proizvodi.html i assets/js/main.js.
