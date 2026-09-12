@@ -1,0 +1,9 @@
+ADRIATIC TRADE v3.8.2 — ciljane finalne korekcije
+
+- Mobilni header smanjen ~22% (bez gubitka čitljivosti logotipa).
+- Četiri emoji benefit ikonice zamenjene čistim jednobojnim line ikonama.
+- Ispravljen opis paketa „Komplet Solana Nin“ na početnoj i stranici Proizvodi.
+- Lifestyle fotografija sa ženom za stolom na mobilnom skraćena sa 460px na 410px; poruka „Dobar izbor vidi se u malim stvarima.“ ostaje.
+- Instagram, email i telefon dobili odgovarajuće line ikonice u footeru; kontakt stranica i Instagram lifestyle CTA takođe imaju ikonice.
+- Sticky/mobile „Poruči“ bar NIJE menjan.
+- Checkout, Worker/Resend logika, cene i paketi nisu menjani.

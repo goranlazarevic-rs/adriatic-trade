@@ -248,3 +248,53 @@
   .portfolio-visual img{aspect-ratio:4/3;object-position:center}
   .portfolio-visual figcaption{font-size:.79rem;padding:12px 14px 14px}
 }
+
+
+/* v3.8.2 — requested mobile polish only; sticky order bar intentionally unchanged */
+.proof-icon{
+  width:32px;
+  height:32px;
+  display:inline-grid;
+  place-items:center;
+  margin:0 auto 5px;
+  color:var(--blue);
+}
+.proof-icon svg{
+  width:27px;
+  height:27px;
+  stroke:currentColor;
+  stroke-width:1.7;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.contact-icon{
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.contact-icon .icon-dot{fill:currentColor;stroke:none}
+.footer-contact-link,.contact-icon-link{
+  display:inline-flex;
+  align-items:center;
+  gap:9px;
+}
+.footer-contact-link .contact-icon{color:#9fc4d4}
+.contact-icon-link{color:var(--blue);font-weight:800}
+.contact-instagram.contact-icon-link{margin-top:8px}
+.lifestyle-instagram.contact-icon-link{margin-top:4px}
+
+@media(max-width:760px){
+  /* 20–25% lower mobile header footprint while keeping the mark legible. */
+  .nav{height:64px}
+  .brand-logo img{height:49px;max-width:96px}
+  .nav-toggle{font-size:1.28rem}
+  .nav-links{top:60px}
+
+  /* Keep the lifestyle photo strong, but reveal copy sooner on a phone. */
+  .lifestyle-photo-main{height:410px}
+  .lifestyle-photo-main img{object-position:center 43%}
+}
