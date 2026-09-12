@@ -142,3 +142,64 @@
   .product-grid-5 .product-img{padding-top:44px;padding-bottom:12px}
   .product-grid-5 .product-img img{max-height:142px;transform:translateY(4px)}
 }
+
+
+/* v3.7 checkout backend + duplicate-submit protection */
+.btn:disabled{opacity:.62;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+.checkout-honeypot{position:absolute!important;left:-10000px!important;top:auto!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important}
+.order-status{padding:13px 15px;border-radius:13px;border:1px solid #c9dce4;background:#f4fafc;color:#365461;font-size:.9rem;font-weight:700}
+.order-status.sending{border-color:#c7dce5;background:#f2f9fc;color:#315868}
+.order-status.error{border-color:#efcbc7;background:#fff3f2;color:#8b3028}
+.order-status.success-message{border-color:#c9e5cb;background:#edf8ee;color:#2e6635}
+.footer-instagram{font-weight:800;color:#d9e8ee!important}
+.footer-instagram:hover{color:#fff!important}
+.contact-instagram{display:inline-flex;align-items:center;gap:7px;margin-top:8px;font-weight:800;color:var(--blue)}
+
+/* v3.8 hero hook: direct campaign message on the existing photograph, without a card/background */
+.hero-place{
+  position:absolute;
+  right:0;
+  bottom:38px;
+  z-index:3;
+  display:grid;
+  gap:5px;
+  max-width:430px;
+  padding:0;
+  text-align:right;
+  background:transparent;
+  border:0;
+  border-radius:0;
+  box-shadow:none;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+  color:var(--navy);
+  text-shadow:0 1px 10px rgba(255,255,255,.78),0 0 24px rgba(255,255,255,.62);
+}
+.hero-place span{
+  font-family:Georgia,"Times New Roman",serif;
+  font-style:italic;
+  font-size:1.34rem;
+  line-height:1.25;
+  font-weight:400;
+  color:var(--navy);
+  letter-spacing:-.01em;
+}
+.hero-place b{
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:1.58rem;
+  line-height:1.18;
+  font-weight:700;
+  color:var(--navy);
+  letter-spacing:-.015em;
+}
+@media (max-width:900px){
+  .hero-place{right:0;bottom:26px;max-width:390px}
+  .hero-place span{font-size:1.2rem}
+  .hero-place b{font-size:1.38rem}
+}
+@media (max-width:760px){
+  .hero-sales .hero-content{padding-bottom:154px}
+  .hero-place{left:0;right:auto;bottom:24px;max-width:320px;text-align:left;gap:4px}
+  .hero-place span{font-size:1.04rem}
+  .hero-place b{font-size:1.22rem;line-height:1.22}
+}

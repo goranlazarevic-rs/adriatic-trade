@@ -1,0 +1,11 @@
+Adriatic Trade v3.6.3 — email potvrda porudžbine
+
+Izmena:
+- Na checkout formi uklonjeno je _captcha=false.
+- FormSubmit autoresponse sada može da pošalje automatsku potvrdu kupcu na email koji unese u polje email.
+- Zadržan je email sa detaljima porudžbine na info@adriatictrade.rs.
+
+Važno:
+- FormSubmit dokumentacija navodi da _autoresponse NE radi kada je reCAPTCHA isključena.
+- Zato će pri slanju porudžbine biti omogućena FormSubmit reCAPTCHA zaštita.
+- Poslovni email ne zahteva prihvatanje svake porudžbine: poruka koju dobijate je već prosleđena porudžbina. Aktivacija forme je jednokratna.

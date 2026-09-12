@@ -1,0 +1,22 @@
+ADRIATIC TRADE v3.7 — GitHub upload
+
+1. Ovaj paket povezuje CHECKOUT sa Cloudflare Worker + Resend backendom.
+2. FormSubmit je uklonjen iz poručivanja. Kontakt forma ga privremeno i dalje koristi dok se ne potvrdi isporuka Resend poruka na info@adriatictrade.rs.
+3. Instagram @adriatictrade je dodat u footer, Kontakt i Organization structured data.
+4. Dupli klik na Naruči je blokiran u browseru, a isti submissionId se koristi pri retry-u; Worker v3.7.3 ima Resend idempotency zaštitu.
+5. Worker endpoint: https://adriatic-trade-orders.lakifinance.workers.dev/order
+
+UPLOAD:
+- Raspakujte ZIP.
+- U GitHub repozitorijumu: Add file -> Upload files.
+- Prevucite SADRŽAJ ovog foldera preko postojećih fajlova.
+- Commit direktno na main.
+- DNS, GitHub Pages custom domain i HTTPS ne menjati.
+
+PRE LIVE PROVERE:
+- potvrditi da info@adriatictrade.rs prima Resend poslovni email;
+- test običnog proizvoda;
+- test paketa;
+- test besplatne dostave >= 2.500 RSD;
+- test paketomata;
+- dvostruki klik/retry -> jedna porudžbina / jedan email.

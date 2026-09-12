@@ -5,11 +5,12 @@ const PRODUCTS={
  '10307':{sku:'10307',slug:'nerafinisana-krupna-600g',name:'BIO nerafinisana krupna morska so 600 g ZIP',price:299,img:'/assets/img/products/nerafinisana-krupna-600g.png'},
  '10240':{sku:'10240',slug:'nerafinisana-sitna-500g',name:'BIO nerafinisana sitna morska so 500 g - kutija sa poklopcem',price:549,img:'/assets/img/products/nerafinisana-sitna-500g.png'},
  'PKT-PROBA':{sku:'PKT-PROBA',name:'Paket za probu',price:1149,img:'/assets/img/story-premium/salt-in-hands.webp',detail:'Cvet soli 100 g + sitna 600 g ZIP + krupna 600 g ZIP'},
- 'PKT-GURMAN':{sku:'PKT-GURMAN',name:'Gurmanski paket',price:1577,img:'/assets/img/story-premium/fleur-rake.webp',detail:'3 × BIO nerafinisana sitna morska so 600 g ZIP + Cvet soli 125 g'},
- 'PKT-KOMPLET':{sku:'PKT-KOMPLET',name:'Komplet Solana Nin',price:2042,img:'/assets/img/story-premium/harvest-workers-wide.webp',detail:'2 × BIO nerafinisana sitna morska so 500 g - kutija sa poklopcem + 1 × BIO nerafinisana krupna morska so 600 g ZIP + Cvet soli 125 g'}
+ 'PKT-GURMAN':{sku:'PKT-GURMAN',name:'Gurmanski paket',price:1399,img:'/assets/img/story-premium/fleur-rake.webp',detail:'3 × BIO nerafinisana sitna morska so 600 g ZIP + Cvet soli 100 g'},
+ 'PKT-KOMPLET':{sku:'PKT-KOMPLET',name:'Komplet Solana Nin',price:1399,img:'/assets/img/story-premium/harvest-workers-wide.webp',detail:'2 × BIO nerafinisana sitna morska so 600 g ZIP + 1 × BIO nerafinisana krupna morska so 600 g ZIP + Cvet soli 100 g'}
 };
 const FREE_SHIPPING=2500;
 const SHIPPING_FEE=300;
+const ORDER_ENDPOINT="https://adriatic-trade-orders.lakifinance.workers.dev/order";
 const fmt=n=>new Intl.NumberFormat('sr-RS',{minimumFractionDigits:0,maximumFractionDigits:0}).format(n)+' RSD';
 const getCart=()=>{try{return JSON.parse(localStorage.getItem('at_cart')||'{}')}catch(e){return {}}};
 const saveCart=c=>{localStorage.setItem('at_cart',JSON.stringify(c));updateCartCount()};
@@ -21,32 +22,34 @@ function showToast(msg){let t=document.querySelector('.toast');if(!t){t=document
 function bindAddButtons(){document.querySelectorAll('[data-add-cart]').forEach(b=>b.addEventListener('click',()=>addToCart(b.dataset.addCart,Number(b.dataset.qty||1))))}
 function renderCart(){const root=document.querySelector('[data-cart-list]');if(!root)return;const c=getCart();const entries=Object.entries(c).filter(([s,q])=>PRODUCTS[s]&&q>0);if(!entries.length){root.innerHTML='<div class="card"><h2 class="h3">Korpa je prazna.</h2><p class="muted">Dodajte proizvod iz našeg asortimana.</p><a class="btn btn-primary" href="/proizvodi.html">Pogledaj proizvode</a></div>';document.querySelector('[data-cart-summary]').innerHTML='';return}root.innerHTML=entries.map(([sku,q])=>{const p=PRODUCTS[sku];return `<div class="cart-item"><img src="${p.img}" alt=""><div><b>${p.name}</b><div class="muted">${p.detail?p.detail+' · ':''}${fmt(p.price)} / kom</div><div class="qty" style="margin-top:8px"><button data-minus="${sku}" aria-label="Smanji količinu">−</button><strong>${q}</strong><button data-plus="${sku}" aria-label="Povećaj količinu">+</button><button class="btn btn-danger btn-small" data-remove="${sku}">Ukloni</button></div></div><strong>${fmt(p.price*q)}</strong></div>`}).join('');root.querySelectorAll('[data-minus]').forEach(b=>b.onclick=()=>{const c=getCart();c[b.dataset.minus]-=1;if(c[b.dataset.minus]<=0)delete c[b.dataset.minus];saveCart(c);renderCart()});root.querySelectorAll('[data-plus]').forEach(b=>b.onclick=()=>{const c=getCart();c[b.dataset.plus]+=1;saveCart(c);renderCart()});root.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{const c=getCart();delete c[b.dataset.remove];saveCart(c);renderCart()});renderSummary()}
 function renderSummary(){const box=document.querySelector('[data-cart-summary]');if(!box)return;const c=getCart(),t=cartTotal(c),free=getsFreeShipping(c),shipping=free?0:SHIPPING_FEE,total=t+shipping,remain=Math.max(0,FREE_SHIPPING-t),pct=Math.min(100,t/FREE_SHIPPING*100);box.innerHTML=`<div class="order-box"><h2 class="h3">Pregled porudžbine</h2><div class="order-line"><span>Vrednost robe</span><b>${fmt(t)}</b></div><div class="order-line"><span>Dostava</span><b>${free?'Besplatna':fmt(shipping)}</b></div><div class="free-progress"><span style="width:${pct}%"></span></div><p class="muted" style="font-size:.88rem">${free?'Ostvarili ste besplatnu dostavu.':'Još '+fmt(remain)+' do besplatne dostave.'}</p><div class="order-total"><span>Ukupno za plaćanje</span><span>${fmt(total)}</span></div><a class="btn btn-primary" style="width:100%;margin-top:18px" href="/checkout.html">Nastavi na poručivanje</a><p class="muted" style="font-size:.78rem;margin-bottom:0">Plaćanje pouzećem. Dostava je 300 RSD za porudžbine ispod 2.500 RSD, a besplatna od 2.500 RSD.</p></div>`}
-function makeOrderId(){const d=new Date(),date=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;let r='';if(window.crypto?.getRandomValues){const a=new Uint16Array(1);crypto.getRandomValues(a);r=String(a[0]%10000).padStart(4,'0')}else r=String(Math.floor(Math.random()*10000)).padStart(4,'0');return `AT-${date}-${r}`}
+function cartFingerprint(entries){return entries.map(([sku,q])=>`${sku}:${q}`).sort().join('|')}
+function makeSubmissionId(){const d=new Date(),date=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;let token='';if(window.crypto?.randomUUID)token=crypto.randomUUID();else if(window.crypto?.getRandomValues){const a=new Uint32Array(4);crypto.getRandomValues(a);token=Array.from(a,x=>x.toString(16).padStart(8,'0')).join('-')}else token=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,12)}`;return `${date}-${token}`}
+function getSubmissionId(fingerprint){try{const saved=JSON.parse(sessionStorage.getItem('at_pending_order')||'null');if(saved?.id&&saved?.fingerprint===fingerprint)return saved.id}catch(e){}const id=makeSubmissionId();try{sessionStorage.setItem('at_pending_order',JSON.stringify({id,fingerprint}))}catch(e){}return id}
+function clearSubmissionId(){try{sessionStorage.removeItem('at_pending_order')}catch(e){}}
+function setOrderStatus(el,message,type=''){if(!el)return;el.textContent=message;el.className=`order-status${type?' '+type:''}`}
 function renderCheckout(){
- const root=document.querySelector('[data-checkout-summary]');const form=document.querySelector('[data-order-form]');if(!root||!form)return;
- const c=getCart();const entries=Object.entries(c).filter(([s,q])=>PRODUCTS[s]&&q>0);
+ const root=document.querySelector('[data-checkout-summary]'),form=document.querySelector('[data-order-form]');if(!root||!form)return;
+ const c=getCart(),entries=Object.entries(c).filter(([s,q])=>PRODUCTS[s]&&q>0);
  if(!entries.length){root.innerHTML='<div class="notice">Korpa je prazna. <a href="/proizvodi.html">Vratite se na proizvode.</a></div>';form.classList.add('hidden');return}
- const t=cartTotal(c),free=getsFreeShipping(c),shipping=free?0:SHIPPING_FEE,total=t+shipping,orderId=makeOrderId();
- const lines=entries.map(([sku,q])=>`${PRODUCTS[sku].name}${PRODUCTS[sku].detail?' ('+PRODUCTS[sku].detail+')':''} × ${q} = ${fmt(PRODUCTS[sku].price*q)}`);
- root.innerHTML=`<div class="checkout-summary"><h3 class="h3">Vaša porudžbina</h3><p class="muted">Broj: <b>${orderId}</b></p>${entries.map(([sku,q])=>`<div class="order-line"><span>${PRODUCTS[sku].name} × ${q}</span><b>${fmt(PRODUCTS[sku].price*q)}</b></div>`).join('')}<div class="order-line"><span>Dostava</span><b>${free?'0,00 RSD - besplatna':fmt(shipping)}</b></div><div class="order-total"><span>Ukupno za plaćanje</span><span>${fmt(total)}</span></div></div>`;
- form.querySelector('[name="order_id"]').value=orderId;
- form.querySelector('[name="order_details"]').value=lines.join('\n');
- form.querySelector('[name="goods_total"]').value=fmt(t);
- form.querySelector('[name="shipping_status"]').value=free?'Besplatna dostava':fmt(shipping);
- form.querySelector('[name="shipping_cost"]').value=fmt(shipping);
- form.querySelector('[name="order_total"]').value=fmt(total);
- form.querySelector('[name="_subject"]').value=`${orderId} - nova porudžbina Adriatic Trade`;
- form.querySelector('[name="_next"]').value=`https://adriatictrade.rs/hvala.html?order=${encodeURIComponent(orderId)}`;
- const address=form.querySelector('[name="Adresa"]');
- const addressLabel=document.querySelector('[data-address-label]');
- const addressField=document.querySelector('[data-address-field]');
- const deliveryRadios=form.querySelectorAll('[name="Nacin isporuke"]');
- const parcelNote=document.querySelector('[data-parcel-note]');
- function syncDelivery(){const method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu';const parcel=method.startsWith('Paketomat');if(address){address.required=!parcel;address.placeholder='Ulica i broj';if(parcel)address.value=''}if(addressLabel)addressLabel.textContent='Adresa i broj *';if(addressField)addressField.classList.toggle('hidden',parcel);if(parcelNote)parcelNote.classList.toggle('hidden',!parcel)}
+ const t=cartTotal(c),free=getsFreeShipping(c),shipping=free?0:SHIPPING_FEE,total=t+shipping;
+ root.innerHTML=`<div class="checkout-summary"><h3 class="h3">Vaša porudžbina</h3><p class="muted">Broj porudžbine biće dodeljen nakon uspešnog slanja.</p>${entries.map(([sku,q])=>`<div class="order-line"><span>${PRODUCTS[sku].name} × ${q}</span><b>${fmt(PRODUCTS[sku].price*q)}</b></div>`).join('')}<div class="order-line"><span>Dostava</span><b>${free?'0 RSD - besplatna':fmt(shipping)}</b></div><div class="order-total"><span>Ukupno za plaćanje</span><span>${fmt(total)}</span></div></div>`;
+ const address=form.querySelector('[name="Adresa"]'),addressLabel=document.querySelector('[data-address-label]'),addressField=document.querySelector('[data-address-field]'),deliveryRadios=form.querySelectorAll('[name="Nacin isporuke"]'),parcelNote=document.querySelector('[data-parcel-note]');
+ function syncDelivery(){const method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu',parcel=method==='Paketomat';if(address){address.required=!parcel;address.placeholder='Ulica i broj';if(parcel)address.value=''}if(addressLabel)addressLabel.textContent='Adresa i broj *';if(addressField)addressField.classList.toggle('hidden',parcel);if(parcelNote)parcelNote.classList.toggle('hidden',!parcel)}
  deliveryRadios.forEach(r=>r.addEventListener('change',syncDelivery));syncDelivery();
- const button=form.querySelector('[type="submit"]');button.textContent='Naruči uz obavezu plaćanja - pouzećem';
- const hint=document.querySelector('[data-checkout-hint]');if(hint)hint.textContent=`Klikom na dugme potvrđujete porudžbinu i obavezu plaćanja ukupnog iznosa ${fmt(total)}. Dostava je ${free?'besplatna':fmt(shipping)}.`;
- form.addEventListener('submit',()=>{const method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu';form.querySelector('[name="_autoresponse"]').value=`Hvala na porudžbini. Broj: ${orderId}.\n\n${lines.join('\n')}\n\nVrednost robe: ${fmt(t)}.\nDostava: ${free?'besplatna':fmt(shipping)}.\nUkupno za plaćanje: ${fmt(total)}.\nNačin isporuke: ${method}.\nPlaćanje: pouzećem.\nRok isporuke: do 5 radnih dana.\n\nAko ste izabrali paketomat, kurirska služba nakon preuzimanja pošiljke može poslati SMS/Viber poruku ili link za izbor dostupne lokacije. Na pojedinim paketomatima način plaćanja otkupnine može biti ograničen.\n\nAdriatic Trade d.o.o. | info@adriatictrade.rs | +381 65 216 9764`;localStorage.removeItem('at_cart')})
+ const button=form.querySelector('[data-order-submit]')||form.querySelector('[type="submit"]'),hint=document.querySelector('[data-checkout-hint]'),status=document.querySelector('[data-order-status]');
+ button.textContent='Naruči uz obavezu plaćanja - pouzećem';if(hint)hint.textContent=`Klikom na dugme potvrđujete porudžbinu i obavezu plaćanja ukupnog iznosa ${fmt(total)}. Dostava je ${free?'besplatna':fmt(shipping)}.`;
+ form.addEventListener('submit',async e=>{
+   e.preventDefault();if(form.dataset.submitting==='1')return;
+   const fingerprint=cartFingerprint(entries),submissionId=getSubmissionId(fingerprint),method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu';
+   const payload={submissionId,company:form.querySelector('[name="company"]')?.value||'',customer:{firstName:form.querySelector('[name="Ime"]').value.trim(),lastName:form.querySelector('[name="Prezime"]').value.trim(),email:form.querySelector('[name="email"]').value.trim(),phone:form.querySelector('[name="Telefon"]').value.trim()},delivery:{method,address:method==='Dostava na adresu'?(address?.value.trim()||''):'',postalCode:form.querySelector('[name="Postanski broj"]').value.trim(),city:form.querySelector('[name="Mesto"]').value.trim(),note:form.querySelector('[name="Napomena"]').value.trim()},items:entries.map(([sku,qty])=>({sku,qty}))};
+   form.dataset.submitting='1';button.disabled=true;const oldText=button.textContent;button.textContent='Porudžbina se šalje…';setOrderStatus(status,'Šaljemo porudžbinu. Molimo sačekajte…','sending');
+   try{
+     const response=await fetch(ORDER_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'omit'});let data={};try{data=await response.json()}catch(err){}
+     if(!response.ok||!data.ok)throw new Error(data.error||'Porudžbina trenutno ne može da bude poslata. Molimo pokušajte ponovo.');
+     localStorage.removeItem('at_cart');clearSubmissionId();setOrderStatus(status,`Porudžbina ${data.orderId} je uspešno primljena.`,'success-message');
+     window.location.href=`/hvala.html?order=${encodeURIComponent(data.orderId)}`;
+   }catch(err){console.error('Order submit failed',err);setOrderStatus(status,err?.message||'Došlo je do greške. Molimo pokušajte ponovo.','error');form.dataset.submitting='0';button.disabled=false;button.textContent=oldText;}
+ });
 }
 
 function setupMobileOrderBar(){

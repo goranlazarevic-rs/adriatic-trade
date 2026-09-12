@@ -1,0 +1,17 @@
+ADRIATIC TRADE v3.8 FINAL
+
+Izmene u odnosu na v3.7:
+- Na početnoj strani uklonjen je bedž "Solana Nin / Nin, Hrvatska..." iz hero sekcije.
+- Na isto mesto, direktno preko postojeće fotografije bez kartice i bez veštačke pozadine, dodat je hook:
+  "Vodiš računa šta jedeš. Obrati pažnju i čime soliš."
+- Hook je posebno prilagođen desktop i mobilnom prikazu.
+- CSS cache verzija podignuta na v3.8 da bi se izmena odmah videla nakon GitHub deploy-a.
+- Sve funkcije iz v3.7 ostaju: checkout preko Cloudflare Worker-a, Resend potvrde, zaštita od duplih klikova/submissionId, Instagram veze, aktuelni proizvodi/cene/paketi.
+
+UPLOAD:
+1. Raspakujte ZIP.
+2. GitHub repo adriatic-trade -> Add file -> Upload files.
+3. Prevucite SADRŽAJ foldera adriatic-trade-site-v3.8-final preko postojećih fajlova.
+4. Commit directly to main.
+5. Predlog poruke: "Adriatic Trade v3.8 final hero hook"
+6. Ne menjati DNS, custom domain niti HTTPS.
