@@ -46,7 +46,7 @@ const getCart=()=>{try{return JSON.parse(localStorage.getItem('at_cart')||'{}')}
 const saveCart=c=>{localStorage.setItem('at_cart',JSON.stringify(c));updateCartCount()};
 const cartTotal=c=>Object.entries(c).reduce((s,[sku,q])=>s+(PRODUCTS[sku]?.price||0)*q,0);
 const getsFreeShipping=c=>cartTotal(c)>=FREE_SHIPPING;
-function updateCartCount(){const c=getCart();const n=Object.values(c).reduce((a,b)=>a+b,0);document.querySelectorAll('[data-cart-count]').forEach(x=>x.textContent=n)}
+function updateCartCount(){const c=getCart();const n=Object.values(c).reduce((a,b)=>a+b,0);document.querySelectorAll('[data-cart-count]').forEach(x=>{x.textContent=n;x.classList.toggle('is-empty',n===0)});document.querySelectorAll('.mobile-cart-link').forEach(a=>a.setAttribute('aria-label',n?`Korpa, ${n} proizvoda`:'Korpa'))}
 function addToCart(sku,qty=1){const c=getCart();c[sku]=(c[sku]||0)+qty;saveCart(c);const t=cartTotal(c),remain=Math.max(0,FREE_SHIPPING-t);showToast(t>=FREE_SHIPPING?'Dodato u korpu. Ostvarili ste besplatnu dostavu.':`Dodato u korpu. Još ${fmt(remain)} do besplatne dostave.`)}
 function showToast(msg){let t=document.querySelector('.toast');if(!t){t=document.createElement('div');t.className='toast';Object.assign(t.style,{position:'fixed',right:'20px',bottom:'20px',zIndex:100,background:'#0e3f67',color:'#fff',padding:'13px 18px',borderRadius:'14px',boxShadow:'0 14px 35px rgba(0,0,0,.2)',fontWeight:'750'});document.body.appendChild(t)}t.innerHTML=`${msg} <a href="/korpa.html">Otvori korpu →</a>`;t.style.display='block';clearTimeout(window.__toast);window.__toast=setTimeout(()=>t.style.display='none',2200)}
 function bindAddButtons(){document.querySelectorAll('[data-add-cart]').forEach(b=>b.addEventListener('click',()=>addToCart(b.dataset.addCart,Number(b.dataset.qty||1))))}
@@ -104,14 +104,24 @@ function renderCheckout(){
 }
 
 function setupMobileOrderBar(){
- const path=location.pathname;
- if(path.includes('/checkout')||path.includes('/hvala')||path.includes('/korpa')) return;
+ const path=location.pathname||'/';
+ const generalShopPaths=new Set(['/','/index.html','/proizvodi.html','/solana-nin.html']);
+ const isProductDetail=path.startsWith('/proizvodi/');
+ if(!generalShopPaths.has(path)&&!isProductDetail)return;
  const bar=document.createElement('div');bar.className='mobile-order-bar';
  const sku=document.body.dataset.productSku;const p=sku?PRODUCTS[sku]:null;
  if(p){bar.innerHTML=`<div class="mobile-order-copy"><b>${fmt(p.price)}</b><small>${p.name}</small></div><button class="btn btn-primary" data-mobile-add="${p.sku}">Dodaj u korpu</button>`;bar.querySelector('[data-mobile-add]').onclick=()=>addToCart(p.sku)}
  else{bar.innerHTML=`<div class="mobile-order-copy"><b>Poručite online</b><small>Dostava 390 RSD • besplatna od 2.500</small></div><a class="btn btn-primary" href="/proizvodi.html">Poruči</a>`}
- document.body.appendChild(bar)
+ document.body.classList.add('has-mobile-order-bar');document.body.appendChild(bar)
 }
 
 function showThankYouOrder(){const el=document.querySelector('[data-order-id]');if(!el)return;let id=new URLSearchParams(location.search).get('order');if(!id||id==='undefined'||id==='null'){try{id=sessionStorage.getItem('at_last_order_id')||''}catch(e){id=''}}if(id&&id!=='undefined'&&id!=='null'){el.textContent=id;document.querySelector('[data-order-id-wrap]')?.classList.remove('hidden')}}
-const toggle=document.querySelector('.nav-toggle'),links=document.querySelector('.nav-links');if(toggle&&links){toggle.onclick=()=>{links.classList.toggle('open');toggle.setAttribute('aria-expanded',links.classList.contains('open'))}}document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());applyPromoDisplay();updateCartCount();bindAddButtons();renderCart();renderCheckout();showThankYouOrder();setupMobileOrderBar();
+const toggle=document.querySelector('.nav-toggle'),links=document.querySelector('.nav-links');
+if(toggle&&links){
+ const setNavOpen=open=>{links.classList.toggle('open',open);toggle.setAttribute('aria-expanded',String(open));toggle.setAttribute('aria-label',open?'Zatvori meni':'Otvori meni');toggle.textContent=open?'×':'☰'};
+ toggle.onclick=e=>{e.stopPropagation();setNavOpen(!links.classList.contains('open'))};
+ document.addEventListener('click',e=>{if(links.classList.contains('open')&&!links.contains(e.target))setNavOpen(false)});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&links.classList.contains('open')){setNavOpen(false);toggle.focus()}});
+ links.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>setNavOpen(false)));
+}
+document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());applyPromoDisplay();updateCartCount();bindAddButtons();renderCart();renderCheckout();showThankYouOrder();setupMobileOrderBar();
