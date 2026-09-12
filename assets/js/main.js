@@ -41,11 +41,12 @@ function renderCheckout(){
  form.addEventListener('submit',async e=>{
    e.preventDefault();if(form.dataset.submitting==='1')return;
    const fingerprint=cartFingerprint(entries),submissionId=getSubmissionId(fingerprint),method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu';
-   const payload={submissionId,company:form.querySelector('[name="company"]')?.value||'',customer:{firstName:form.querySelector('[name="Ime"]').value.trim(),lastName:form.querySelector('[name="Prezime"]').value.trim(),email:form.querySelector('[name="email"]').value.trim(),phone:form.querySelector('[name="Telefon"]').value.trim()},delivery:{method,address:method==='Dostava na adresu'?(address?.value.trim()||''):'',postalCode:form.querySelector('[name="Postanski broj"]').value.trim(),city:form.querySelector('[name="Mesto"]').value.trim(),note:form.querySelector('[name="Napomena"]').value.trim()},items:entries.map(([sku,qty])=>({sku,qty}))};
+   const payload={submissionId,customer:{firstName:form.querySelector('[name="Ime"]').value.trim(),lastName:form.querySelector('[name="Prezime"]').value.trim(),email:form.querySelector('[name="email"]').value.trim(),phone:form.querySelector('[name="Telefon"]').value.trim()},delivery:{method,address:method==='Dostava na adresu'?(address?.value.trim()||''):'',postalCode:form.querySelector('[name="Postanski broj"]').value.trim(),city:form.querySelector('[name="Mesto"]').value.trim(),note:form.querySelector('[name="Napomena"]').value.trim()},items:entries.map(([sku,qty])=>({sku,qty}))};
    form.dataset.submitting='1';button.disabled=true;const oldText=button.textContent;button.textContent='Porudžbina se šalje…';setOrderStatus(status,'Šaljemo porudžbinu. Molimo sačekajte…','sending');
    try{
      const response=await fetch(ORDER_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'omit'});let data={};try{data=await response.json()}catch(err){}
-     if(!response.ok||!data.ok)throw new Error(data.error||'Porudžbina trenutno ne može da bude poslata. Molimo pokušajte ponovo.');
+     if(!response.ok||!data.ok||!data.orderId)throw new Error(data.error||'Porudžbina nije potvrđena od servera. Molimo pokušajte ponovo.');
+     try{sessionStorage.setItem('at_last_order_id',data.orderId)}catch(e){}
      localStorage.removeItem('at_cart');clearSubmissionId();setOrderStatus(status,`Porudžbina ${data.orderId} je uspešno primljena.`,'success-message');
      window.location.href=`/hvala.html?order=${encodeURIComponent(data.orderId)}`;
    }catch(err){console.error('Order submit failed',err);setOrderStatus(status,err?.message||'Došlo je do greške. Molimo pokušajte ponovo.','error');form.dataset.submitting='0';button.disabled=false;button.textContent=oldText;}
@@ -62,5 +63,5 @@ function setupMobileOrderBar(){
  document.body.appendChild(bar)
 }
 
-function showThankYouOrder(){const el=document.querySelector('[data-order-id]');if(!el)return;const id=new URLSearchParams(location.search).get('order');if(id){el.textContent=id;document.querySelector('[data-order-id-wrap]')?.classList.remove('hidden')}}
+function showThankYouOrder(){const el=document.querySelector('[data-order-id]');if(!el)return;let id=new URLSearchParams(location.search).get('order');if(!id||id==='undefined'||id==='null'){try{id=sessionStorage.getItem('at_last_order_id')||''}catch(e){id=''}}if(id&&id!=='undefined'&&id!=='null'){el.textContent=id;document.querySelector('[data-order-id-wrap]')?.classList.remove('hidden')}}
 const toggle=document.querySelector('.nav-toggle'),links=document.querySelector('.nav-links');if(toggle&&links){toggle.onclick=()=>{links.classList.toggle('open');toggle.setAttribute('aria-expanded',links.classList.contains('open'))}}document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());updateCartCount();bindAddButtons();renderCart();renderCheckout();showThankYouOrder();setupMobileOrderBar();

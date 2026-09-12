@@ -1,0 +1,7 @@
+Adriatic Trade v3.8.3 – checkout hotfix
+
+- Uklonjen honeypot input "company" iz checkout forme jer browser autofill može da ga popuni i Worker tada vraća lažni success bez orderId/emaila.
+- Frontend sada zahteva validan orderId pre čišćenja korpe i preusmeravanja na Hvala stranicu.
+- Hvala stranica više nikada ne prikazuje "undefined"; ima session fallback za poslednji orderId.
+- main.js cache-bust promenjen na v=3.8.3 na svim stranicama.
+- Dizajn, cene, paketi i ostale funkcionalnosti nisu menjani.
