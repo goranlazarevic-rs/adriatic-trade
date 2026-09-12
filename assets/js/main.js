@@ -10,6 +10,36 @@ const PRODUCTS={
 };
 const FREE_SHIPPING=2500;
 const SHIPPING_FEE=390;
+const PROMOTIONS={
+ '10240':{regularPrice:549,promoPrice:499,start:'2026-09-27',end:'2026-10-27',label:'WEB AKCIJA',validUntil:'26.10.2026.'}
+};
+function belgradeDateKey(date=new Date()){
+ const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Belgrade',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+ const m=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${m.year}-${m.month}-${m.day}`;
+}
+function promoActive(promo,dateKey=belgradeDateKey()){return Boolean(promo&&dateKey>=promo.start&&dateKey<promo.end)}
+function applyScheduledPrices(){Object.entries(PROMOTIONS).forEach(([sku,promo])=>{if(PRODUCTS[sku])PRODUCTS[sku].price=promoActive(promo)?promo.promoPrice:promo.regularPrice})}
+function applyPromoDisplay(){
+ Object.entries(PROMOTIONS).forEach(([sku,promo])=>{
+   const active=promoActive(promo),price=active?promo.promoPrice:promo.regularPrice;
+   document.querySelectorAll(`[data-live-price="${sku}"]`).forEach(el=>{
+     if(active)el.innerHTML=`<span class="price-sale-wrap"><span class="price-old">${fmt(promo.regularPrice)}</span><span class="price-sale">${fmt(promo.promoPrice)}</span></span><small>${promo.label} · važi do ${promo.validUntil} · sa PDV-om</small>`;
+     else if(!el.dataset.regularRendered){el.innerHTML=`${fmt(price)}<small>sa PDV-om</small>`;el.dataset.regularRendered='1'}
+   });
+   document.querySelectorAll(`[data-promo-badge="${sku}"]`).forEach(el=>el.classList.toggle('hidden',!active));
+   const jsonLd=document.querySelector(`[data-product-jsonld="${sku}"]`);
+   if(jsonLd){try{const data=JSON.parse(jsonLd.textContent);if(data.offers){data.offers.price=String(price);if(active)data.offers.priceValidUntil='2026-10-26';else delete data.offers.priceValidUntil}jsonLd.textContent=JSON.stringify(data)}catch(e){}}
+ })
+ const bundleValues={
+   'PKT-GURMAN':{regular:PRODUCTS['10240'].price+PRODUCTS['10306'].price+PRODUCTS['10307'].price+PRODUCTS['10086'].price,offer:PRODUCTS['PKT-GURMAN'].price},
+   'PKT-KOMPLET':{regular:PRODUCTS['10240'].price+PRODUCTS['10012'].price+PRODUCTS['10086'].price,offer:PRODUCTS['PKT-KOMPLET'].price}
+ };
+ Object.entries(bundleValues).forEach(([sku,v])=>{
+   document.querySelectorAll(`[data-bundle-regular="${sku}"]`).forEach(el=>el.textContent=fmt(v.regular));
+   document.querySelectorAll(`[data-bundle-saving="${sku}"]`).forEach(el=>el.textContent=`Ušteda ${fmt(v.regular-v.offer)} • besplatna dostava od 2.500 RSD`);
+ });
+}
+applyScheduledPrices();
 const ORDER_ENDPOINT="https://adriatic-trade-orders.lakifinance.workers.dev/order";
 const fmt=n=>new Intl.NumberFormat('sr-RS',{minimumFractionDigits:0,maximumFractionDigits:0}).format(n)+' RSD';
 const getCart=()=>{try{return JSON.parse(localStorage.getItem('at_cart')||'{}')}catch(e){return {}}};
@@ -84,4 +114,4 @@ function setupMobileOrderBar(){
 }
 
 function showThankYouOrder(){const el=document.querySelector('[data-order-id]');if(!el)return;let id=new URLSearchParams(location.search).get('order');if(!id||id==='undefined'||id==='null'){try{id=sessionStorage.getItem('at_last_order_id')||''}catch(e){id=''}}if(id&&id!=='undefined'&&id!=='null'){el.textContent=id;document.querySelector('[data-order-id-wrap]')?.classList.remove('hidden')}}
-const toggle=document.querySelector('.nav-toggle'),links=document.querySelector('.nav-links');if(toggle&&links){toggle.onclick=()=>{links.classList.toggle('open');toggle.setAttribute('aria-expanded',links.classList.contains('open'))}}document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());updateCartCount();bindAddButtons();renderCart();renderCheckout();showThankYouOrder();setupMobileOrderBar();
+const toggle=document.querySelector('.nav-toggle'),links=document.querySelector('.nav-links');if(toggle&&links){toggle.onclick=()=>{links.classList.toggle('open');toggle.setAttribute('aria-expanded',links.classList.contains('open'))}}document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());applyPromoDisplay();updateCartCount();bindAddButtons();renderCart();renderCheckout();showThankYouOrder();setupMobileOrderBar();
