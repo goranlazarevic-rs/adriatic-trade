@@ -3,4 +3,6 @@ Allow: /
 Disallow: /checkout.html
 Disallow: /korpa.html
 Disallow: /hvala.html
+Disallow: /admin.html
 Sitemap: https://adriatictrade.rs/sitemap.xml
+
