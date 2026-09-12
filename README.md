@@ -9,7 +9,7 @@ Finalna conversion-first verzija sajta za Adriatic Trade d.o.o. i online prodaju
 - cene sa PDV-om
 - korpu i checkout
 - plaćanje pouzećem
-- dostavu 300 RSD ispod 2.500 RSD i besplatnu dostavu od 2.500 RSD
+- dostavu 390 RSD ispod 2.500 RSD i besplatnu dostavu od 2.500 RSD
 - mogućnost označavanja paketomata kada je dostupan
 - email potvrdu porudžbine preko FormSubmit servisa
 - mobilni sticky CTA / dugme za poručivanje

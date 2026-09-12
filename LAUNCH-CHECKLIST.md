@@ -8,7 +8,7 @@
 - [ ] Početna proverena na telefonu i desktopu
 - [ ] Svih 5 proizvoda se prikazuje sa slikom i cenom
 - [ ] Dodavanje u korpu radi za svih 5 SKU
-- [ ] Dostava: 300 RSD ispod 2.500 RSD
+- [ ] Dostava: 390 RSD ispod 2.500 RSD
 - [ ] Besplatna dostava: od 2.500 RSD
 - [ ] Paketomat označen kao opcija kada je dostupan
 - [ ] Checkout obračunava konačan iznos pre potvrde

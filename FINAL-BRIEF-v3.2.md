@@ -31,7 +31,7 @@ Sajt treba istovremeno da gradi poverenje u Adriatic Trade i Solanu Nin i da vod
 ## Webshop
 - 5 proizvoda
 - korpa u localStorage
-- dostava 300 RSD ispod 2.500 RSD
+- dostava 390 RSD ispod 2.500 RSD
 - besplatna dostava od 2.500 RSD
 - cela Srbija
 - rok do 5 radnih dana
