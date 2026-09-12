@@ -27,3 +27,10 @@ Sajt je napravljen da istovremeno gradi brend i vodi ka porudžbini: prirodno po
 5. Pri prvom slanju potvrditi FormSubmit aktivacioni email na `info@adriatictrade.rs`.
 6. Testirati email kupcu i email Adriatic Trade-u.
 7. Proveriti konačne deklaracije proizvoda pre komercijalnog puštanja.
+
+
+## v3.9.1 legal
+- Pravna dokumentacija 12.09.2026 (ZZP 35/2026; obrazac 82/2026)
+- PDF dokumenti u /dokumenti
+- Checkout taster eksplicitno navodi obavezu plaćanja
+- Dopunjene stranice odustanka i reklamacija za prehrambene proizvode
