@@ -298,3 +298,5 @@
   .lifestyle-photo-main{height:410px}
   .lifestyle-photo-main img{object-position:center 43%}
 }
+
+.smart-topup{margin:14px 0 4px;padding:15px 16px;border:1px solid #d7e6eb;border-radius:16px;background:#f8fcfd}.smart-topup-kicker{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;font-weight:900;color:var(--blue);margin-bottom:3px}.smart-topup-title{font-weight:900;color:var(--navy);line-height:1.35}.smart-topup p{margin:6px 0 12px;color:var(--muted);font-size:.84rem;line-height:1.5}.smart-topup .btn{min-height:38px;padding-inline:14px;font-size:.82rem}
