@@ -1,0 +1,10 @@
+ADRIATIC TRADE v3.8.1 — LIFESTYLE FOTOGRAFIJE
+
+Dodato:
+1. Početna: lifestyle fotografija žene za stolom sa Solana Nin proizvodima, odmah posle paket ponuda i pre priče o poreklu.
+2. O nama: lifestyle fotografija iz svakodnevnog/aktivnog ritma, uz poruku o jasnom poreklu i Instagram CTA.
+3. Solana Nin: široka fotografija šireg portfolija Solana Nin sa jasnom napomenom da se aktuelni proizvodi dostupni u Srbiji nalaze na stranici Proizvodi.
+4. Kampanjska fotografija sa već ispisanim sloganom nije dodavana, jer je njen hook već integrisan direktno u hero početne strane.
+5. Fotografije su optimizovane u WebP formatu za brže učitavanje.
+
+Nisu menjani: cene, paketi, korpa, checkout, Cloudflare Worker/Resend logika, DNS, domen, HTTPS.

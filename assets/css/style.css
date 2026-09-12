@@ -203,3 +203,48 @@
   .hero-place span{font-size:1.04rem}
   .hero-place b{font-size:1.22rem;line-height:1.22}
 }
+
+
+/* v3.8.1 — human/lifestyle photography: product in real everyday use */
+.lifestyle-feature{background:#fff}
+.lifestyle-feature-soft{background:linear-gradient(180deg,#f7fbfc,#fff)}
+.lifestyle-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:64px;align-items:center}
+.lifestyle-grid-reverse{grid-template-columns:.9fr 1.1fr}
+.lifestyle-grid-reverse .lifestyle-photo{order:2}
+.lifestyle-grid-reverse .lifestyle-copy{order:1}
+.lifestyle-photo{position:relative;overflow:hidden;border-radius:30px;box-shadow:0 22px 58px rgba(14,63,103,.12);background:#eef5f6}
+.lifestyle-photo img{width:100%;height:100%;display:block;object-fit:cover}
+.lifestyle-photo-main{height:620px}
+.lifestyle-photo-main img{object-position:center 45%}
+.lifestyle-photo-active{height:560px}
+.lifestyle-photo-active img{object-position:center 43%}
+.lifestyle-copy{max-width:520px}
+.lifestyle-copy .lead{margin-bottom:14px}
+.lifestyle-copy .muted{font-size:1rem;margin-bottom:28px}
+.lifestyle-copy .btn{margin-top:2px}
+.lifestyle-instagram{display:inline-flex;margin-top:4px;font-weight:850;color:var(--blue)}
+.portfolio-story{background:#fbf8f1}
+.portfolio-head{align-items:end}
+.portfolio-visual{margin:4px 0 0;border-radius:30px;overflow:hidden;background:#fff;box-shadow:0 20px 58px rgba(14,63,103,.1);border:1px solid #eadfcd}
+.portfolio-visual img{width:100%;aspect-ratio:16/8.6;object-fit:cover;object-position:center}
+.portfolio-visual figcaption{padding:14px 18px 16px;color:#667983;font-size:.84rem;line-height:1.5;background:#fff}
+@media(max-width:900px){
+  .lifestyle-grid,.lifestyle-grid-reverse{grid-template-columns:1fr;gap:34px}
+  .lifestyle-grid-reverse .lifestyle-photo,.lifestyle-grid-reverse .lifestyle-copy{order:initial}
+  .lifestyle-copy{max-width:720px}
+  .lifestyle-photo-main{height:520px}
+  .lifestyle-photo-active{height:520px}
+}
+@media(max-width:760px){
+  .lifestyle-feature{padding:70px 0}
+  .lifestyle-grid{gap:26px}
+  .lifestyle-photo{border-radius:22px}
+  .lifestyle-photo-main{height:460px}
+  .lifestyle-photo-main img{object-position:center 42%}
+  .lifestyle-photo-active{height:460px}
+  .lifestyle-photo-active img{object-position:center 42%}
+  .portfolio-story{padding:56px 0}
+  .portfolio-visual{border-radius:22px}
+  .portfolio-visual img{aspect-ratio:4/3;object-position:center}
+  .portfolio-visual figcaption{font-size:.79rem;padding:12px 14px 14px}
+}
