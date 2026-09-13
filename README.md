@@ -1,41 +1,28 @@
-# Adriatic Trade website v3.13.3.2
+# Adriatic Trade website v3.15.0
 
-Finalna conversion-first verzija sajta za Adriatic Trade d.o.o. i online prodaju proizvoda Solane Nin.
+Stabilna v3.14.0 prodajna i analytics osnova, nadograđena premium homepage storytellingom za Solanu Nin i jasnijim B2B ulazom za Adriatic Trade.
 
-## Šta sadrži
-- novi Adriatic Trade logo
-- autentične fotografije Solane Nin, polja soli, berbe i porekla
-- 5 SKU proizvoda sa slikama iz dostavljenog kataloga
-- cene sa PDV-om
-- korpu i checkout
+## Produkciona osnova koja ostaje nepromenjena
+- 5 SKU proizvoda i postojeće maloprodajne cene sa PDV-om
+- paketi Probaj / Za svaki dan / Premium
+- korpa, količine `− / +`, Smart Cart i checkout
+- dostava 390 RSD / besplatna od 2.500 RSD
 - plaćanje pouzećem
-- dostavu 390 RSD ispod 2.500 RSD i besplatnu dostavu od 2.500 RSD
-- mogućnost označavanja paketomata kada je dostupan
-- email potvrdu porudžbine preko FormSubmit servisa
-- mobilni sticky CTA / dugme za poručivanje
-- SEO meta podatke, sitemap i strukturirane podatke
-- pravne stranice za online prodaju
+- Cloudflare Worker v4.3.0 + D1 + R2
+- GA4 `G-WX8JF1GHRT`, consent i ecommerce tracking
 
-## Vizuelna logika
-Sajt je napravljen da istovremeno gradi brend i vodi ka porudžbini: prirodno poreklo, ručna berba, tradicija Solane Nin i jasni CTA elementi. Fotografije su optimizovane u WebP format radi brzine na mobilnim uređajima.
+## v3.15.0 Premium Brand Story
+- novi homepage hero: **Morska so. Rođena iz Jadrana.**
+- autentična fotografija Nina i Solane Nin
+- sekcija **Četiri elementa. 1 kristal.**
+- Cvet soli kao flagship premium proizvod: **Za završni dodir.**
+- editorial sekcija o ručnoj berbi
+- origin sekcija Nin / Solana Nin
+- postojeći proizvodi i paketi pomereni u prirodniji brand → product → purchase tok
+- desktop B2B dugme jasno izdvojeno u navigaciji
+- na mobilnom B2B saradnja istaknuta u hamburger meniju; korpa ostaje stalno vidljiva u headeru
 
-## Pre objave
-1. Uploadovati ceo sadržaj foldera u postojeći GitHub repository `adriatic-trade`.
-2. Sačekati GitHub Pages deployment.
-3. Proveriti HTTPS.
-4. Napraviti probnu porudžbinu.
-5. Pri prvom slanju potvrditi FormSubmit aktivacioni email na `info@adriatictrade.rs`.
-6. Testirati email kupcu i email Adriatic Trade-u.
-7. Proveriti konačne deklaracije proizvoda pre komercijalnog puštanja.
-
-
-## v3.9.1 legal
-- Pravna dokumentacija 12.09.2026 (ZZP 35/2026; obrazac 82/2026)
-- PDF dokumenti u /dokumenti
-- Checkout taster eksplicitno navodi obavezu plaćanja
-- Dopunjene stranice odustanka i reklamacija za prehrambene proizvode
-
-
-## Current frontend release
-- v3.13.3 — Product quantity controls
-- Worker remains v4.3.0
+## Važno
+- Product kartice i kupovne reference koriste aktuelne SKU fotografije za tržište Srbije.
+- Storytelling fotografije služe za poreklo, proces i brend atmosferu.
+- Worker nije potrebno menjati: ostaje v4.3.0.

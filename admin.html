@@ -1,85 +1,80 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="sr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Porudžbine | Adriatic Trade</title>
-  <meta name="robots" content="noindex,nofollow,noarchive">
-  <link rel="icon" href="/assets/img/favicon.png">
-  <link rel="stylesheet" href="/assets/css/style.css?v=3.13.3-final">
-  <link rel="stylesheet" href="/assets/css/admin.css?v=1.0.0">
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>Porudžbine | Adriatic Trade</title>
+<meta content="noindex,nofollow,noarchive" name="robots"/>
+<link href="/assets/img/favicon.png" rel="icon"/>
+<link href="/assets/css/style.css?v=3.15.0" rel="stylesheet"/>
+<link href="/assets/css/admin.css?v=1.0.0" rel="stylesheet"/>
 </head>
 <body class="admin-body">
-  <header class="admin-header">
-    <div class="container admin-header-inner">
-      <a href="/" class="admin-brand" aria-label="Adriatic Trade početna">
-        <img src="/assets/img/adriatic-trade-logo-header.png" alt="Adriatic Trade">
-      </a>
-      <div>
-        <div class="admin-kicker">INTERNI PANEL</div>
-        <h1>Porudžbine</h1>
-      </div>
-      <button class="btn btn-secondary btn-small hidden" type="button" data-admin-logout>Odjavi se</button>
-    </div>
-  </header>
-
-  <main class="container admin-main">
-    <section class="admin-login" data-admin-login>
-      <div class="admin-login-card">
-        <span class="eyebrow">Zaštićen pristup</span>
-        <h2 class="h2">Upravljanje porudžbinama.</h2>
-        <p class="lead">Unesite administratorski ključ. Ključ se čuva samo tokom ove sesije u ovom tabu.</p>
-        <form class="form" data-admin-login-form>
-          <div class="field">
-            <label for="admin-token">Administratorski ključ</label>
-            <input id="admin-token" type="password" autocomplete="current-password" required data-admin-token>
-          </div>
-          <div class="admin-error hidden" data-admin-login-error></div>
-          <button class="btn btn-primary" type="submit">Otvori panel</button>
-        </form>
-      </div>
-    </section>
-
-    <section class="admin-app hidden" data-admin-app>
-      <div class="admin-toolbar">
-        <div class="admin-toolbar-fields">
-          <div class="field admin-search">
-            <label for="admin-q">Pretraga</label>
-            <input id="admin-q" placeholder="Broj porudžbine, kupac, email, telefon..." data-admin-search>
-          </div>
-          <div class="field admin-status-filter">
-            <label for="admin-status">Status</label>
-            <select id="admin-status" data-admin-filter>
-              <option value="">Sve</option>
-              <option value="new">Nova</option>
-              <option value="confirmed">Potvrđena</option>
-              <option value="shipped">Poslata</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn btn-secondary" type="button" data-admin-refresh>Osveži</button>
-      </div>
-
-      <div class="admin-alert hidden" data-admin-alert></div>
-
-      <div class="admin-layout">
-        <section class="admin-orders-panel">
-          <div class="admin-panel-head">
-            <h2>Porudžbine</h2>
-            <span data-admin-count>0</span>
-          </div>
-          <div class="admin-order-list" data-admin-orders>
-            <div class="admin-empty">Učitavanje...</div>
-          </div>
-        </section>
-
-        <section class="admin-detail-panel" data-admin-detail>
-          <div class="admin-empty admin-empty-large">Izaberite porudžbinu sa leve strane.</div>
-        </section>
-      </div>
-    </section>
-  </main>
-
-  <script src="/assets/js/admin.js?v=1.0.0"></script>
+<header class="admin-header">
+<div class="container admin-header-inner">
+<a aria-label="Adriatic Trade početna" class="admin-brand" href="/">
+<img alt="Adriatic Trade" src="/assets/img/adriatic-trade-logo-header.png"/>
+</a>
+<div>
+<div class="admin-kicker">INTERNI PANEL</div>
+<h1>Porudžbine</h1>
+</div>
+<button class="btn btn-secondary btn-small hidden" data-admin-logout="" type="button">Odjavi se</button>
+</div>
+</header>
+<main class="container admin-main">
+<section class="admin-login" data-admin-login="">
+<div class="admin-login-card">
+<span class="eyebrow">Zaštićen pristup</span>
+<h2 class="h2">Upravljanje porudžbinama.</h2>
+<p class="lead">Unesite administratorski ključ. Ključ se čuva samo tokom ove sesije u ovom tabu.</p>
+<form class="form" data-admin-login-form="">
+<div class="field">
+<label for="admin-token">Administratorski ključ</label>
+<input autocomplete="current-password" data-admin-token="" id="admin-token" required="" type="password"/>
+</div>
+<div class="admin-error hidden" data-admin-login-error=""></div>
+<button class="btn btn-primary" type="submit">Otvori panel</button>
+</form>
+</div>
+</section>
+<section class="admin-app hidden" data-admin-app="">
+<div class="admin-toolbar">
+<div class="admin-toolbar-fields">
+<div class="field admin-search">
+<label for="admin-q">Pretraga</label>
+<input data-admin-search="" id="admin-q" placeholder="Broj porudžbine, kupac, email, telefon..."/>
+</div>
+<div class="field admin-status-filter">
+<label for="admin-status">Status</label>
+<select data-admin-filter="" id="admin-status">
+<option value="">Sve</option>
+<option value="new">Nova</option>
+<option value="confirmed">Potvrđena</option>
+<option value="shipped">Poslata</option>
+</select>
+</div>
+</div>
+<button class="btn btn-secondary" data-admin-refresh="" type="button">Osveži</button>
+</div>
+<div class="admin-alert hidden" data-admin-alert=""></div>
+<div class="admin-layout">
+<section class="admin-orders-panel">
+<div class="admin-panel-head">
+<h2>Porudžbine</h2>
+<span data-admin-count="">0</span>
+</div>
+<div class="admin-order-list" data-admin-orders="">
+<div class="admin-empty">Učitavanje...</div>
+</div>
+</section>
+<section class="admin-detail-panel" data-admin-detail="">
+<div class="admin-empty admin-empty-large">Izaberite porudžbinu sa leve strane.</div>
+</section>
+</div>
+</section>
+</main>
+<script src="/assets/js/admin.js?v=1.0.0"></script>
 </body>
 </html>
