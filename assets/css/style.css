@@ -565,3 +565,24 @@
   .premium-elements-head .origin-manifesto{font-size:1rem;line-height:1.7}
   .premium-elements-head .origin-manifesto strong{font-size:1.45rem}
 }
+
+
+/* v3.15.3 — Cvet soli proof points: additives, marine origin, natural minerals and ecological production */
+.premium-fleur-credentials{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 24px;max-width:610px}
+.premium-fleur-credentials>div{border-top:1px solid rgba(255,255,255,.24);padding:14px 2px 0;display:grid;gap:4px}
+.premium-fleur-credentials b{font-size:.75rem;letter-spacing:.1em;color:#fff}
+.premium-fleur-credentials small{font-size:.79rem;line-height:1.45;color:#c7d6dc}
+.premium-fleur-credentials .premium-bio-mark{border-top-color:rgba(159,197,128,.72)}
+.premium-fleur-credentials .premium-bio-mark b{color:#dbeecb}
+.cvet-proof-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0 24px}
+.cvet-proof-grid>div{border:1px solid var(--line);border-radius:14px;padding:13px 14px;background:#fbfdfe;display:grid;gap:3px}
+.cvet-proof-grid b{color:var(--navy);font-size:.86rem}
+.cvet-proof-grid span{color:var(--muted);font-size:.78rem;line-height:1.45}
+.cvet-proof-grid .cvet-proof-bio{background:#f5faef;border-color:#d4e5c6}
+.cvet-proof-grid .cvet-proof-bio b{color:#456f31}
+@media(max-width:760px){
+  .premium-fleur-credentials{grid-template-columns:1fr}
+  .cvet-proof-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .cvet-proof-grid>div{padding:11px 12px}
+}
+@media(max-width:420px){.cvet-proof-grid{grid-template-columns:1fr}}
