@@ -1,0 +1,5 @@
+Adriatic Trade v3.15.2 — FINAL TYPOGRAPHY PATCH
+
+Upload the contents of this folder to the ROOT of the GitHub repository.
+This patch contains only changed HTML files, assets/css/style.css and the upgrade note.
+It does not change images, JavaScript, cart logic, GA4, prices, delivery or Worker.
