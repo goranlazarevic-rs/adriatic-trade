@@ -369,3 +369,31 @@
   .checkout-reassurance{position:static;padding:20px}
   body.has-mobile-order-bar{padding-bottom:72px}
 }
+
+
+/* v3.13.3 — inline product quantity controls */
+.inline-cart-control{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:4px 7px 4px 11px;border:1px solid #bad4df;border-radius:999px;background:#f8fcfd;color:var(--navy)}
+.inline-cart-label{font-size:.72rem;font-weight:850;white-space:nowrap;color:var(--muted)}
+.inline-cart-stepper{display:inline-flex;align-items:center;gap:5px}
+.inline-cart-stepper button,.mobile-cart-control button{display:inline-grid;place-items:center;width:32px;height:32px;min-width:32px;padding:0;border:1px solid #c5d9e1;border-radius:50%;background:#fff;color:var(--navy);font-size:1.05rem;font-weight:850;line-height:1;cursor:pointer}
+.inline-cart-stepper button:hover,.mobile-cart-control button:hover{border-color:#96bdcc;background:#f0f8fb}
+.inline-cart-stepper strong{min-width:20px;text-align:center;font-size:.92rem;color:var(--navy)}
+.inline-cart-stepper button:focus-visible,.mobile-cart-control button:focus-visible{outline:3px solid rgba(17,127,169,.2);outline-offset:1px}
+.product-actions .inline-cart-control{flex:1;justify-content:space-between;min-width:140px}
+.product-detail .btns .inline-cart-control{min-height:50px;padding:5px 8px 5px 14px}
+.product-detail .btns .inline-cart-stepper button{width:38px;height:38px;min-width:38px}
+.mobile-order-action{display:flex;align-items:center}
+.mobile-cart-control{display:flex;align-items:center;gap:6px;min-height:44px;padding:4px 6px;border:1px solid #bad4df;border-radius:999px;background:#f8fcfd;color:var(--navy)}
+.mobile-cart-control strong{min-width:20px;text-align:center;font-size:.9rem}
+.mobile-cart-control span{padding-right:5px;font-size:.68rem;font-weight:800;color:var(--muted);white-space:nowrap}
+@media(max-width:760px){
+  .product-actions .inline-cart-control{width:100%;min-height:44px;padding:5px 7px 5px 12px}
+  .inline-cart-stepper button{width:34px;height:34px;min-width:34px}
+  .product-detail .btns .inline-cart-control{width:100%;justify-content:space-between}
+  .mobile-cart-control button{width:34px;height:34px;min-width:34px}
+}
+
+/* v3.13.3 final: quantity controls also apply to bundle offers */
+.bundle-body .inline-cart-control{width:100%;justify-content:space-between;min-height:50px;margin-top:8px;padding:5px 8px 5px 14px}
+.bundle-body .inline-cart-stepper button{width:38px;height:38px;min-width:38px}
+@media(max-width:760px){.bundle-body .inline-cart-control{min-height:48px}.bundle-body .inline-cart-stepper button{width:36px;height:36px;min-width:36px}}

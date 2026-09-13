@@ -43,10 +43,34 @@ applyScheduledPrices();
 const ORDER_ENDPOINT="https://adriatic-trade-orders.lakifinance.workers.dev/order";
 const fmt=n=>new Intl.NumberFormat('sr-RS',{minimumFractionDigits:0,maximumFractionDigits:0}).format(n)+' RSD';
 const getCart=()=>{try{return JSON.parse(localStorage.getItem('at_cart')||'{}')}catch(e){return {}}};
-const saveCart=c=>{localStorage.setItem('at_cart',JSON.stringify(c));updateCartCount()};
+const saveCart=c=>{localStorage.setItem('at_cart',JSON.stringify(c));updateCartCount();updateProductQuantityControls()};
 const cartTotal=c=>Object.entries(c).reduce((s,[sku,q])=>s+(PRODUCTS[sku]?.price||0)*q,0);
 const getsFreeShipping=c=>cartTotal(c)>=FREE_SHIPPING;
 function updateCartCount(){const c=getCart();const n=Object.values(c).reduce((a,b)=>a+b,0);document.querySelectorAll('[data-cart-count]').forEach(x=>{x.textContent=n;x.classList.toggle('is-empty',n===0)});document.querySelectorAll('.mobile-cart-link').forEach(a=>a.setAttribute('aria-label',n?`Korpa, ${n} proizvoda`:'Korpa'))}
+function setCartQuantity(sku,qty){const c=getCart();if(qty>0)c[sku]=qty;else delete c[sku];saveCart(c)}
+function changeCartQuantity(sku,delta){const c=getCart(),next=Math.max(0,(Number(c[sku])||0)+delta);setCartQuantity(sku,next)}
+function inlineQtyControlHtml(sku){const p=PRODUCTS[sku];return `<div class="inline-cart-control hidden" data-inline-cart="${sku}" aria-label="Količina ${p?.name||sku} u korpi"><span class="inline-cart-label">U korpi</span><div class="inline-cart-stepper"><button type="button" data-inline-minus="${sku}" aria-label="Smanji količinu ${p?.name||'stavke'}">−</button><strong data-inline-qty="${sku}" aria-live="polite">1</strong><button type="button" data-inline-plus="${sku}" aria-label="Povećaj količinu ${p?.name||'stavke'}">+</button></div></div>`}
+function bindProductQuantityControls(){
+ document.querySelectorAll('[data-add-cart]').forEach(button=>{
+   const sku=button.dataset.addCart;if(!PRODUCTS[sku]||button.dataset.qtyControlBound==='1')return;
+   button.dataset.qtyControlBound='1';button.insertAdjacentHTML('afterend',inlineQtyControlHtml(sku));
+ });
+ document.querySelectorAll('[data-inline-minus]').forEach(b=>b.addEventListener('click',()=>changeCartQuantity(b.dataset.inlineMinus,-1)));
+ document.querySelectorAll('[data-inline-plus]').forEach(b=>b.addEventListener('click',()=>changeCartQuantity(b.dataset.inlinePlus,1)));
+ updateProductQuantityControls();
+}
+function updateProductQuantityControls(){
+ const c=getCart();
+ document.querySelectorAll('[data-add-cart]').forEach(button=>{
+   const sku=button.dataset.addCart;if(!PRODUCTS[sku])return;
+   const qty=Number(c[sku])||0,control=button.parentElement?.querySelector(`[data-inline-cart="${sku}"]`);
+   button.classList.toggle('hidden',qty>0);if(control){control.classList.toggle('hidden',qty<=0);const value=control.querySelector(`[data-inline-qty="${sku}"]`);if(value)value.textContent=qty}
+ });
+ document.querySelectorAll('[data-mobile-add]').forEach(button=>{
+   const sku=button.dataset.mobileAdd,qty=Number(c[sku])||0,control=button.parentElement?.querySelector(`[data-mobile-cart="${sku}"]`);
+   button.classList.toggle('hidden',qty>0);if(control){control.classList.toggle('hidden',qty<=0);const value=control.querySelector(`[data-mobile-qty="${sku}"]`);if(value)value.textContent=qty}
+ });
+}
 function addToCart(sku,qty=1){const c=getCart();c[sku]=(c[sku]||0)+qty;saveCart(c);const t=cartTotal(c),remain=Math.max(0,FREE_SHIPPING-t);showToast(t>=FREE_SHIPPING?'Dodato u korpu. Ostvarili ste besplatnu dostavu.':`Dodato u korpu. Još ${fmt(remain)} do besplatne dostave.`)}
 function showToast(msg){let t=document.querySelector('.toast');if(!t){t=document.createElement('div');t.className='toast';Object.assign(t.style,{position:'fixed',right:'20px',bottom:'20px',zIndex:100,background:'#0e3f67',color:'#fff',padding:'13px 18px',borderRadius:'14px',boxShadow:'0 14px 35px rgba(0,0,0,.2)',fontWeight:'750'});document.body.appendChild(t)}t.innerHTML=`${msg} <a href="/korpa.html">Otvori korpu →</a>`;t.style.display='block';clearTimeout(window.__toast);window.__toast=setTimeout(()=>t.style.display='none',2200)}
 function bindAddButtons(){document.querySelectorAll('[data-add-cart]').forEach(b=>b.addEventListener('click',()=>addToCart(b.dataset.addCart,Number(b.dataset.qty||1))))}
@@ -110,7 +134,7 @@ function setupMobileOrderBar(){
  if(!generalShopPaths.has(path)&&!isProductDetail)return;
  const bar=document.createElement('div');bar.className='mobile-order-bar';
  const sku=document.body.dataset.productSku;const p=sku?PRODUCTS[sku]:null;
- if(p){bar.innerHTML=`<div class="mobile-order-copy"><b>${fmt(p.price)}</b><small>${p.name}</small></div><button class="btn btn-primary" data-mobile-add="${p.sku}">Dodaj u korpu</button>`;bar.querySelector('[data-mobile-add]').onclick=()=>addToCart(p.sku)}
+ if(p){bar.innerHTML=`<div class="mobile-order-copy"><b>${fmt(p.price)}</b><small>${p.name}</small></div><div class="mobile-order-action"><button class="btn btn-primary" data-mobile-add="${p.sku}">Dodaj u korpu</button><div class="mobile-cart-control hidden" data-mobile-cart="${p.sku}"><button type="button" data-mobile-minus="${p.sku}" aria-label="Smanji količinu ${p.name}">−</button><strong data-mobile-qty="${p.sku}" aria-live="polite">1</strong><button type="button" data-mobile-plus="${p.sku}" aria-label="Povećaj količinu ${p.name}">+</button><span>u korpi</span></div></div>`;bar.querySelector('[data-mobile-add]').onclick=()=>addToCart(p.sku);bar.querySelector('[data-mobile-minus]').onclick=()=>changeCartQuantity(p.sku,-1);bar.querySelector('[data-mobile-plus]').onclick=()=>changeCartQuantity(p.sku,1)}
  else{bar.innerHTML=`<div class="mobile-order-copy"><b>Poručite online</b><small>Dostava 390 RSD • besplatna od 2.500</small></div><a class="btn btn-primary" href="/proizvodi.html">Poruči</a>`}
  document.body.classList.add('has-mobile-order-bar');document.body.appendChild(bar)
 }
@@ -124,4 +148,4 @@ if(toggle&&links){
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&links.classList.contains('open')){setNavOpen(false);toggle.focus()}});
  links.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>setNavOpen(false)));
 }
-document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());applyPromoDisplay();updateCartCount();bindAddButtons();renderCart();renderCheckout();showThankYouOrder();setupMobileOrderBar();
+document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());applyPromoDisplay();updateCartCount();bindAddButtons();setupMobileOrderBar();bindProductQuantityControls();renderCart();renderCheckout();showThankYouOrder();updateProductQuantityControls();

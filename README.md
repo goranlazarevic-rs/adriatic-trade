@@ -1,4 +1,4 @@
-# Adriatic Trade website v3.2
+# Adriatic Trade website v3.13.3.2
 
 Finalna conversion-first verzija sajta za Adriatic Trade d.o.o. i online prodaju proizvoda Solane Nin.
 
@@ -34,3 +34,8 @@ Sajt je napravljen da istovremeno gradi brend i vodi ka porudžbini: prirodno po
 - PDF dokumenti u /dokumenti
 - Checkout taster eksplicitno navodi obavezu plaćanja
 - Dopunjene stranice odustanka i reklamacija za prehrambene proizvode
+
+
+## Current frontend release
+- v3.13.3 — Product quantity controls
+- Worker remains v4.3.0
