@@ -586,3 +586,45 @@
   .cvet-proof-grid>div{padding:11px 12px}
 }
 @media(max-width:420px){.cvet-proof-grid{grid-template-columns:1fr}}
+
+
+/* v3.16.0 — Solana Nin cinematic video story */
+.solana-film-v316{background:#f8f5ef;padding-top:96px;padding-bottom:106px}
+.solana-film-v316-head{max-width:860px;margin-bottom:34px}
+.solana-film-v316-head .h2{font-family:var(--editorial-serif);font-weight:400;font-size:clamp(2.8rem,5vw,4.9rem);line-height:.98;letter-spacing:-.04em;color:var(--ink);margin-top:13px}
+.solana-film-v316-player{position:relative;overflow:hidden;border-radius:28px;background:#071d29;box-shadow:0 28px 70px rgba(12,44,61,.16);aspect-ratio:16/9}
+.solana-film-v316-player video{display:block;width:100%;height:100%;object-fit:cover;background:#071d29}
+@media(max-width:760px){
+ .solana-film-v316{padding-top:72px;padding-bottom:78px}
+ .solana-film-v316-head .h2{font-size:3rem}
+ .solana-film-v316-player{border-radius:18px}
+}
+
+/* v3.16.0 — Solana Nin film: lightweight homepage link + modal */
+.premium-film-cta-v316{display:flex;justify-content:center;margin-top:34px}
+.premium-film-link-v316{appearance:none;border:0;background:transparent;color:var(--ink);display:inline-flex;align-items:center;gap:13px;padding:8px 4px;cursor:pointer;text-align:left;font:inherit}
+.premium-film-link-v316:hover b{border-color:var(--ink)}
+.premium-film-link-v316 b{display:block;font-size:1rem;line-height:1.2;border-bottom:1px solid rgba(16,47,65,.28);padding-bottom:2px;transition:border-color .2s ease}
+.premium-film-link-v316 small{display:block;color:#718087;font-size:.78rem;margin-top:4px;letter-spacing:.02em}
+.premium-film-play-v316{display:grid;place-items:center;width:46px;height:46px;border:1px solid rgba(16,47,65,.32);border-radius:50%;font-size:.75rem;padding-left:2px;flex:0 0 auto;background:#fff;box-shadow:0 8px 22px rgba(12,44,61,.08)}
+.solana-video-modal[hidden]{display:none!important}
+.solana-video-modal{position:fixed;inset:0;z-index:9999;background:rgba(4,18,27,.86);backdrop-filter:blur(8px);display:grid;place-items:center;padding:28px;overflow:auto}
+.solana-video-modal-dialog{width:min(1120px,100%);background:#f8f5ef;border-radius:24px;box-shadow:0 36px 100px rgba(0,0,0,.42);overflow:hidden}
+.solana-video-modal-bar{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:20px 24px 18px}
+.solana-video-modal-bar h2{font-family:var(--editorial-serif);font-size:clamp(1.75rem,3vw,2.7rem);font-weight:400;line-height:1;letter-spacing:-.035em;color:var(--ink);margin:6px 0 0}
+.solana-video-modal-close{appearance:none;border:1px solid rgba(16,47,65,.18);background:#fff;color:var(--ink);width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:1.8rem;line-height:1;cursor:pointer;flex:0 0 auto}
+.solana-video-modal-close:hover{border-color:rgba(16,47,65,.45)}
+.solana-video-modal-player{background:#061923;aspect-ratio:16/9}
+.solana-video-modal-player video{display:block;width:100%;height:100%;object-fit:contain;background:#061923}
+body.solana-video-modal-open{overflow:hidden}
+@media(max-width:720px){
+ .premium-film-cta-v316{justify-content:flex-start;margin-top:26px}
+ .premium-film-link-v316{gap:11px}
+ .premium-film-play-v316{width:42px;height:42px}
+ .solana-video-modal{padding:12px}
+ .solana-video-modal-dialog{border-radius:18px}
+ .solana-video-modal-bar{padding:15px 15px 13px;align-items:flex-start}
+ .solana-video-modal-bar h2{font-size:1.8rem}
+ .solana-video-modal-close{width:40px;height:40px}
+}
+

@@ -219,3 +219,44 @@ if(toggle&&links){
  links.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>setNavOpen(false)));
 }
 document.querySelectorAll('[data-year]').forEach(x=>x.textContent=new Date().getFullYear());applyPromoDisplay();setupAnalyticsConsent();updateCartCount();bindAddButtons();setupMobileOrderBar();bindProductQuantityControls();renderCart();renderCheckout();showThankYouOrder();updateProductQuantityControls();trackPageCommerce();trackPendingPurchase();
+
+/* v3.16.0 — Solana Nin film modal on homepage */
+(function(){
+  const modal=document.querySelector('[data-solana-video-modal]');
+  const openBtn=document.querySelector('[data-solana-video-open]');
+  if(!modal||!openBtn) return;
+  const closeBtn=modal.querySelector('[data-solana-video-close]');
+  const video=modal.querySelector('[data-solana-video]');
+  let lastFocus=null;
+
+  function closeModal(reset=true){
+    if(modal.hidden) return;
+    if(video){
+      video.pause();
+      if(reset){ try{ video.currentTime=0; }catch(e){} }
+    }
+    modal.hidden=true;
+    modal.setAttribute('aria-hidden','true');
+    document.body.classList.remove('solana-video-modal-open');
+    if(lastFocus&&typeof lastFocus.focus==='function') lastFocus.focus();
+  }
+
+  function openModal(){
+    lastFocus=document.activeElement;
+    modal.hidden=false;
+    modal.setAttribute('aria-hidden','false');
+    document.body.classList.add('solana-video-modal-open');
+    if(closeBtn) closeBtn.focus();
+    if(video){
+      try{ video.currentTime=0; }catch(e){}
+      const playPromise=video.play();
+      if(playPromise&&typeof playPromise.catch==='function') playPromise.catch(()=>{});
+    }
+  }
+
+  openBtn.addEventListener('click',openModal);
+  if(closeBtn) closeBtn.addEventListener('click',()=>closeModal());
+  modal.addEventListener('click',(e)=>{ if(e.target===modal) closeModal(); });
+  document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'&&!modal.hidden) closeModal(); });
+  if(video) video.addEventListener('ended',()=>closeModal(false));
+})();
