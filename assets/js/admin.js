@@ -22,7 +22,7 @@
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const money=v=>new Intl.NumberFormat('sr-RS',{maximumFractionDigits:0}).format(Number(v||0))+' RSD';
   const dt=v=>{if(!v)return '—';try{return new Intl.DateTimeFormat('sr-RS',{dateStyle:'short',timeStyle:'short',timeZone:'Europe/Belgrade'}).format(new Date(v))}catch{return v}};
-  const statusLabel=s=>({new:'Nova',confirmed:'Potvrđena',shipped:'Poslata'}[s]||s);
+  const statusLabel=s=>({new:'Nova',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana'}[s]||s);
   const chip=s=>`<span class="status-chip status-${esc(s)}">${esc(statusLabel(s))}</span>`;
 
   async function api(path,options={}){
@@ -78,23 +78,28 @@
 
   function renderDetail(o){
     const items=(o.items||[]).map(i=>`<div class="admin-item"><div><strong>${esc(i.name)}</strong><div class="muted">SKU ${esc(i.sku)}${i.detail?' · '+esc(i.detail):''}</div></div><div>${esc(i.qty)}</div><div>${esc(money(i.lineTotal))}</div></div>`).join('');
-    const events=(o.events||[]).map(e=>`<div class="admin-event"><strong>${esc(eventTitle(e.event_type))}</strong>${e.note?`<div>${esc(e.note)}</div>`:''}<time>${esc(dt(e.created_at))}</time></div>`).join('')||'<div class="muted">Nema događaja.</div>';
+    const securityEvent=[...(o.events||[])].reverse().find(e=>e.event_type==='security_flag');
+    const securityWarning=securityEvent?`<div class="admin-security-warning"><strong>⚠ Proverite porudžbinu pre potvrde</strong><span>${esc(securityEvent.note||'Automatska kontrola je označila porudžbinu za dodatnu proveru.')}</span></div>`:'';
+    const events=(o.events||[]).map(e=>`<div class="admin-event ${e.event_type==='security_flag'?'admin-event-security':''}"><strong>${esc(eventTitle(e.event_type))}</strong>${e.note?`<div>${esc(e.note)}</div>`:''}<time>${esc(dt(e.created_at))}</time></div>`).join('')||'<div class="muted">Nema događaja.</div>';
     const address=o.delivery.method==='Dostava na adresu'?`${o.delivery.address}, ${o.delivery.postalCode} ${o.delivery.city}`:`Paketomat · ${o.delivery.postalCode} ${o.delivery.city}`;
     let actions='';
-    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email.</p><div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button></div></div>`;
+    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email.</p><div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
     if(o.status==='confirmed')actions=`<div class="admin-actions"><h3>Predaja kuriru</h3><p>Unesite podatke pošiljke. Fiskalni račun može biti dodat kao PDF i biće poslat kupcu u prilogu.</p><form class="admin-ship-form" data-ship-form>
       <div class="field"><label>Kurirska služba *</label><input name="courier" placeholder="npr. D Express" required></div>
       <div class="field"><label>Broj pošiljke *</label><input name="trackingNumber" required></div>
       <div class="field wide"><label>Link za praćenje</label><input name="trackingUrl" type="url" placeholder="https://..."></div>
       <div class="field wide"><label>Fiskalni račun (PDF)</label><input name="receipt" type="file" accept="application/pdf,.pdf"><div class="admin-file-note">PDF do 5 MB. Panel ne generiše fiskalni račun; šalje dokument iz vašeg fiskalnog sistema.</div></div>
       <div class="wide"><button class="btn btn-primary" type="submit">Označi kao poslato i obavesti kupca</button></div>
-    </form></div>`;
+    </form><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-danger-outline" type="button" data-cancel>Otkaži porudžbinu</button></div></div>`;
     if(o.status==='shipped')actions=`<div class="admin-actions"><h3>Pošiljka je poslata</h3><div class="admin-info">
       ${row('Kurir',o.courier||'—')}${row('Broj pošiljke',o.trackingNumber||'—')}${o.trackingUrl?rowLink('Praćenje',o.trackingUrl,o.trackingUrl):''}${o.receiptFilename?`<div class="admin-action-row"><button class="btn btn-secondary" type="button" data-receipt>Preuzmi fiskalni račun</button></div>`:''}
     </div></div>`;
+    if(o.status==='rejected')actions=`<div class="admin-actions admin-terminal-action"><h3>Porudžbina je odbijena</h3><p>${esc(lastDecisionNote(o,'rejected')||'Kupac je obavešten emailom. Porudžbina ostaje sačuvana u evidenciji.')}</p></div>`;
+    if(o.status==='cancelled')actions=`<div class="admin-actions admin-terminal-action"><h3>Porudžbina je otkazana</h3><p>${esc(lastDecisionNote(o,'cancelled')||'Kupac je obavešten emailom. Porudžbina ostaje sačuvana u evidenciji.')}</p></div>`;
 
     detail.innerHTML=`<div class="admin-detail-head"><div><span class="eyebrow">Porudžbina</span><h2>${esc(o.id)}</h2></div>${chip(o.status)}</div>
     <div class="admin-detail-body">
+      ${securityWarning}
       <div class="admin-detail-grid"><div class="admin-box"><h3>Kupac</h3><div class="admin-info">${row('Ime',o.customer.firstName+' '+o.customer.lastName)}${rowLink('Email','mailto:'+o.customer.email,o.customer.email)}${rowLink('Telefon','tel:'+o.customer.phone.replace(/\s+/g,''),o.customer.phone)}</div></div>
       <div class="admin-box"><h3>Isporuka</h3><div class="admin-info">${row('Način',o.delivery.method)}${row('Adresa',address)}${row('Napomena',o.delivery.note||'—')}${row('Plaćanje',o.payment||'Pouzećem')}</div></div></div>
       <div class="admin-items"><div class="admin-item admin-item-head"><div>Proizvod</div><div>Kol.</div><div>Iznos</div></div>${items}</div>
@@ -104,13 +109,65 @@
     </div>`;
 
     detail.querySelector('[data-confirm]')?.addEventListener('click',()=>confirmOrder(o.id));
+    detail.querySelector('[data-reject]')?.addEventListener('click',()=>openDecisionDialog('reject',o.id));
+    detail.querySelector('[data-cancel]')?.addEventListener('click',()=>openDecisionDialog('cancel',o.id));
     detail.querySelector('[data-ship-form]')?.addEventListener('submit',e=>shipOrder(e,o.id));
     detail.querySelector('[data-receipt]')?.addEventListener('click',()=>downloadReceipt(o.id,o.receiptFilename));
   }
 
   function row(label,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
   function rowLink(label,href,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong><a class="admin-link" href="${esc(href)}">${esc(value)}</a></strong></div>`}
-  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata'}[v]||v)}
+  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal'}[v]||v)}
+
+  function lastDecisionNote(o,type){
+    const ev=[...(o.events||[])].reverse().find(e=>e.event_type===type);
+    return ev?.note||'';
+  }
+
+  function openDecisionDialog(action,id){
+    const isReject=action==='reject';
+    const title=isReject?'Odbij porudžbinu':'Otkaži porudžbinu';
+    const intro=isReject
+      ?'Kupac će dobiti email da porudžbina nije potvrđena. Porudžbina se ne briše iz evidencije.'
+      :'Kupac će dobiti email da je već potvrđena porudžbina otkazana pre slanja.';
+    const modal=document.createElement('div');
+    modal.className='admin-modal';
+    modal.innerHTML=`<div class="admin-modal-backdrop" data-close></div><div class="admin-modal-card" role="dialog" aria-modal="true" aria-labelledby="decision-title">
+      <div class="admin-modal-head"><div><span class="eyebrow">Promena statusa</span><h3 id="decision-title">${esc(title)}</h3></div><button type="button" class="admin-modal-x" aria-label="Zatvori" data-close>×</button></div>
+      <p class="admin-modal-intro">${esc(intro)}</p>
+      <form data-decision-form>
+        <div class="field"><label for="decision-reason">Razlog *</label><select id="decision-reason" name="reasonCode" required>
+          <option value="">Izaberite razlog</option>
+          <option value="unavailable">Proizvod trenutno nije dostupan</option>
+          <option value="delivery">Isporuka na navedenu adresu/lokaciju nije moguća</option>
+          <option value="invalid">Podaci porudžbine nisu potpuni ili ispravni</option>
+          <option value="duplicate">Dupla ili test porudžbina</option>
+          <option value="customer_request">Na zahtev kupca</option>
+          <option value="other">Drugo</option>
+        </select></div>
+        <div class="field"><label for="decision-note">Napomena</label><textarea id="decision-note" name="note" rows="3" maxlength="500" placeholder="Kratko objašnjenje koje će videti i kupac (opciono, osim za 'Drugo')."></textarea></div>
+        <div class="admin-modal-actions"><button type="button" class="btn btn-secondary" data-close>Odustani</button><button type="submit" class="btn btn-danger">${esc(title)}</button></div>
+      </form>
+    </div>`;
+    document.body.appendChild(modal);
+    const close=()=>modal.remove();
+    modal.querySelectorAll('[data-close]').forEach(x=>x.addEventListener('click',close));
+    modal.querySelector('[data-decision-form]').addEventListener('submit',async e=>{
+      e.preventDefault();
+      const form=e.currentTarget;
+      const reasonCode=form.reasonCode.value;
+      const note=form.note.value.trim();
+      if(!reasonCode){notify('Izaberite razlog.');return}
+      if(reasonCode==='other'&&!note){notify("Za opciju 'Drugo' unesite kratku napomenu.");return}
+      const submit=form.querySelector('button[type="submit"]');submit.disabled=true;
+      try{
+        const data=await api('/admin/orders/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reasonCode,note})});
+        close();notify(isReject?'Porudžbina je odbijena. Kupac je obavešten.':'Porudžbina je otkazana. Kupac je obavešten.','success');
+        await loadOrders();renderDetail(data.order);
+      }catch(err){notify(err.message);submit.disabled=false}
+    });
+    setTimeout(()=>modal.querySelector('select')?.focus(),30);
+  }
 
   async function confirmOrder(id){
     if(!confirm('Potvrditi porudžbinu i poslati kupcu email potvrde?'))return;
