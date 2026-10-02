@@ -27,4 +27,8 @@ assert.equal((await post({revision:3,paymentStatus:'refunded',reason:'Povraćaj'
 o=await get();assert.equal(o.operations.paymentStatus,'refunded');assert.equal(o.total,1020);assert.equal(o.items[0].unitPrice,600);assert.equal(o.events.length,4);
 for(const e of o.events)assert.ok(JSON.parse(e.note).actor);
 const list=await ctx.runAdmin(new Request('https://test/admin/orders?from=2026-10-03'));assert.equal((await list.json()).orders.length,0);
+ctx.env={DB:db,ADMIN_TOKEN:'synthetic-admin-secret'};
+vm.runInContext('globalThis.runFetch=(request)=>worker.fetch(request,env,{});',ctx);
+const unauthorized=await ctx.runFetch(new Request('https://test/admin/orders',{headers:{Origin:'https://adriatictrade.rs'}}));assert.equal(unauthorized.status,401);
+const badOrigin=await ctx.runFetch(new Request('https://test/admin/orders',{headers:{Origin:'https://evil.example',Authorization:'Bearer synthetic-admin-secret'}}));assert.equal(badOrigin.status,403);
 console.log('PASS: state transitions, payments, optimistic locking, audit events, immutable prices, date filters, manual fiscal linking.');
