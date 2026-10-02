@@ -34,6 +34,12 @@ for (const terminal of ['rejected','cancelled']) {
   assert.equal(blocked.status,409);
   const after=await get();assert.deepEqual(after.operations,before.operations);assert.equal(after.operationsRevision,before.operationsRevision);assert.equal(after.events.length,before.events.length);
 }
+sqlite.exec("UPDATE orders SET status='confirmed' WHERE id='AT-TEST'");
+const raceBefore=await get();const batchOriginal=db.batch;
+db.batch=async statements=>{sqlite.exec("UPDATE orders SET status='cancelled' WHERE id='AT-TEST'");return batchOriginal(statements);};
+assert.equal((await post({revision:raceBefore.operationsRevision,internalNote:'Race',reason:'Race'})).status,409);
+db.batch=batchOriginal;
+const raceAfter=await get();assert.deepEqual(raceAfter.operations,raceBefore.operations);assert.equal(raceAfter.events.length,raceBefore.events.length);
 ctx.env={DB:db,ADMIN_TOKEN:'synthetic-admin-secret'};
 vm.runInContext('globalThis.runFetch=(request)=>worker.fetch(request,env,{});',ctx);
 const unauthorized=await ctx.runFetch(new Request('https://test/admin/orders',{headers:{Origin:'https://adriatictrade.rs'}}));assert.equal(unauthorized.status,401);
