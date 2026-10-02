@@ -78,9 +78,7 @@ function trackPendingPurchase(){
  if(p.smartCartUsed)gaEvent('smart_cart_purchase',{transaction_id:p.transactionId,value:p.value,currency:GA_CURRENCY});
  try{sessionStorage.setItem(sentKey,'1');sessionStorage.removeItem('at_pending_purchase_event')}catch(e){}clearSmartCartUsed();
 }
-const PROMOTIONS={
- '10240':{regularPrice:550,promoPrice:499,start:'2026-09-27',end:'2026-10-27',label:'WEB AKCIJA',validUntil:'26.10.2026.'}
-};
+const PROMOTIONS={};
 function belgradeDateKey(date=new Date()){
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Belgrade',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
  const m=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${m.year}-${m.month}-${m.day}`;
