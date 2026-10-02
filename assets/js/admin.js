@@ -51,10 +51,13 @@
     if(filter.value)params.set('status',filter.value);
     if(search.value.trim())params.set('q',search.value.trim());
     params.set('limit','100');
+    for(const key of ['from','to']) {const v=document.querySelector('[data-date-'+key+']').value;if(v)params.set(key,v);}
     list.innerHTML='<div class="admin-empty">Učitavanje...</div>';
     try{
       const data=await api('/admin/orders?'+params.toString());
-      orders=data.orders||[];count.textContent=orders.length;
+      const mode=document.querySelector('[data-ops-filter]').value;
+      orders=(data.orders||[]).filter(o=>!mode || (mode==='risk'?o.securityFlagged&&o.operations.riskReview==='pending':mode==='unpaid'?o.operations.paymentStatus==='unpaid':o.operations.fulfillment===mode));
+      count.textContent=orders.length+(data.orders?.length===100?' (limit 100; suzite datume)':'');
       renderList();
       if(selectedId&&!orders.some(o=>o.id===selectedId)){selectedId='';detail.innerHTML='<div class="admin-empty admin-empty-large">Izaberite porudžbinu sa leve strane.</div>'}
       if(selectFirst&&orders[0])await openOrder(orders[0].id);
@@ -80,7 +83,7 @@
     const items=(o.items||[]).map(i=>`<div class="admin-item"><div><strong>${esc(i.name)}</strong><div class="muted">SKU ${esc(i.sku)}${i.detail?' · '+esc(i.detail):''}</div></div><div>${esc(i.qty)}</div><div>${esc(money(i.lineTotal))}</div></div>`).join('');
     const securityEvent=[...(o.events||[])].reverse().find(e=>e.event_type==='security_flag');
     const securityWarning=securityEvent?`<div class="admin-security-warning"><strong>⚠ Proverite porudžbinu pre potvrde</strong><span>${esc(securityEvent.note||'Automatska kontrola je označila porudžbinu za dodatnu proveru.')}</span></div>`:'';
-    const events=(o.events||[]).map(e=>`<div class="admin-event ${e.event_type==='security_flag'?'admin-event-security':''}"><strong>${esc(eventTitle(e.event_type))}</strong>${e.note?`<div>${esc(e.note)}</div>`:''}<time>${esc(dt(e.created_at))}</time></div>`).join('')||'<div class="muted">Nema događaja.</div>';
+    const events=(o.events||[]).map(e=>`<div class="admin-event ${e.event_type==='security_flag'?'admin-event-security':''}"><strong>${esc(eventTitle(e.event_type))}</strong>${e.note?`<div>${esc(eventNote(e))}</div>`:''}<time>${esc(dt(e.created_at))}</time></div>`).join('')||'<div class="muted">Nema događaja.</div>';
     const address=o.delivery.method==='Dostava na adresu'?`${o.delivery.address}, ${o.delivery.postalCode} ${o.delivery.city}`:`Paketomat · ${o.delivery.postalCode} ${o.delivery.city}`;
     let actions='';
     if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email.</p><div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
@@ -105,9 +108,16 @@
       <div class="admin-items"><div class="admin-item admin-item-head"><div>Proizvod</div><div>Kol.</div><div>Iznos</div></div>${items}</div>
       <div class="admin-totals"><div class="admin-total-row"><span>Vrednost robe</span><strong>${esc(money(o.goodsTotal))}</strong></div><div class="admin-total-row"><span>Dostava</span><strong>${o.shipping===0?'Besplatna':esc(money(o.shipping))}</strong></div><div class="admin-total-row final"><span>Ukupno</span><span>${esc(money(o.total))}</span></div></div>
       ${actions}
+      ${operationsForm(o)}
       <div class="admin-events"><div class="admin-box"><h3>Istorija</h3>${events}</div></div>
     </div>`;
 
+    detail.querySelector('[data-operations]')?.addEventListener('submit',async e=>{
+      e.preventDefault(); const body=Object.fromEntries(new FormData(e.currentTarget));body.revision=o.operationsRevision;
+      setBusy(detail,true);
+      try {const data=await api('/admin/orders/'+encodeURIComponent(o.id)+'/operations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});await loadOrders();renderDetail(data.order);notify('Izmene su sačuvane.','success');} catch(err){notify(err.message);} finally {setBusy(detail,false);}
+    });
+    detail.querySelector('[data-print-label]')?.addEventListener('click',()=>printLabel(o));
     detail.querySelector('[data-confirm]')?.addEventListener('click',()=>confirmOrder(o.id));
     detail.querySelector('[data-reject]')?.addEventListener('click',()=>openDecisionDialog('reject',o.id));
     detail.querySelector('[data-cancel]')?.addEventListener('click',()=>openDecisionDialog('cancel',o.id));
@@ -194,6 +204,40 @@
     }catch(err){notify(err.message)}
   }
 
+
+  const opsLabels={pending:'Čeka pripremu',ready:'Spremna za slanje',shipped:'Poslata',delivered:'Isporučena',returned:'Vraćena',failed:'Neuspešna isporuka',unpaid:'Nenaplaćena',paid:'Naplaćena',refunded:'Refundirana',approved:'Proverena — prihvatljiva',rejected:'Proverena — odbijena'};
+  function eventNote(e){if(e.event_type!=='operations')return e.note;try{const n=JSON.parse(e.note);return n.actor+' · '+n.reason+' · '+n.changes.map(c=>c.key+': '+(opsLabels[c.before]||c.before||'—')+' → '+(opsLabels[c.after]||c.after||'—')).join('; ')}catch{return e.note}}
+  function operationsForm(o){const v=o.operations||{};
+    const field=(name,label,type='text')=>`<div class="field"><label>${label}<input name="${name}" type="${type}" value="${esc(v[name]||'')}" maxlength="160"></label></div>`;
+    const select=(name,label,values)=>`<div class="field"><label>${label}<select name="${name}">${values.map(x=>`<option value="${x}" ${v[name]===x?'selected':''}>${opsLabels[x]}</option>`).join('')}</select></label></div>`;
+    return `<div class="admin-box"><h3>Operativna evidencija</h3><form data-operations class="admin-ship-form">
+      ${select('fulfillment','Isporuka',['pending','ready','shipped','delivered','returned','failed'])}
+      ${select('paymentStatus','Naplata',['unpaid','paid','refunded'])}
+      ${field('remittanceDate','Datum prenosa novca od kurira','date')}${field('paymentReference','Referenca naplate / refundacije')}
+      ${select('riskReview','Provera porudžbine',['pending','approved','rejected'])}
+      <div class="field wide"><label>Interna beleška<textarea name="internalNote" maxlength="2000" rows="3">${esc(v.internalNote||'')}</textarea></label><small>Vidljivo samo administratoru.</small></div>
+      <div class="wide"><h3>Fiskalizacija</h3><p>Priprema za integraciju. Ovde se evidentira račun iz fiskalnog sistema; unos broja ne izdaje niti proverava račun.</p></div>
+      ${field('fiscalProvider','Fiskalni sistem')}${field('fiscalNumber','Broj fiskalnog računa')}${field('fiscalReference','Referenca izvornog računa / refundacije')}
+      <div class="field wide"><label>Razlog izmene *<input name="reason" required maxlength="500"></label></div>
+      <div class="wide"><button class="btn btn-primary" type="submit">Sačuvaj evidenciju</button></div>
+    </form><h3>Nalepnica za paket</h3><label>Format <select data-label-size><option value="100x150">100 × 150 mm</option><option value="80x100">80 × 100 mm</option></select></label> <button class="btn btn-secondary" type="button" data-print-label>Štampaj adresnu nalepnicu</button><p>Adresna nalepnica. Kurirska nalepnica sa barkodom biće dostupna nakon povezivanja kurira.</p></div>`;
+  }
+  function printLabel(o){
+    const w=window.open('','_blank');if(!w){notify('Dozvolite otvaranje prozora za štampu.');return;}
+    const size=detail.querySelector('[data-label-size]').value.split('x');
+    w.document.write(`<!doctype html><html lang="sr"><head><title>Nalepnica ${esc(o.id)}</title><style>@page{size:${size[0]}mm ${size[1]}mm;margin:5mm}body{font:14px Arial;color:#000;overflow-wrap:anywhere}h2{font-size:20px}p{margin:10px 0}</style></head><body><strong>ADRIATIC TRADE d.o.o.</strong><p>Cvetna 6, 21208 Sremska Kamenica<br>+381 65 216 9764</p><hr><h2>${esc(o.customer.firstName+' '+o.customer.lastName)}</h2><p>${esc(o.delivery.address)}<br>${esc(o.delivery.postalCode+' '+o.delivery.city)}<br>${esc(o.customer.phone)}</p><p>${esc(o.delivery.method)}</p><hr><p>Porudžbina: ${esc(o.id)}<br>${o.trackingNumber?'Pošiljka: '+esc(o.trackingNumber)+'<br>':''}Pouzeće: ${esc(money(o.operations.paymentStatus==='paid'?0:o.total))}</p><small>Adresna nalepnica — nije kurirski dokument.</small></body></html>`);
+    w.document.close();w.focus();w.print();
+  }
+  function exportOrders(){
+    const header=['Porudžbina','Datum','Status','Isporuka','Naplata','Ime','Prezime','Telefon','Email','Adresa','Poštanski broj','Mesto','Kurir','Pošiljka','Roba RSD','Dostava RSD','Ukupno RSD','Pouzeće RSD','Datum prenosa','Fiskalni račun'];
+    const cell=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
+    const rows=orders.map(o=>[o.id,o.createdAt,statusLabel(o.status),opsLabels[o.operations.fulfillment],opsLabels[o.operations.paymentStatus],o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.courier,o.trackingNumber,o.goodsTotal,o.shipping,o.total,o.operations.paymentStatus==='paid'?0:o.total,o.operations.remittanceDate,o.operations.fiscalNumber]);
+    const url=URL.createObjectURL(new Blob(['\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
+    const a=document.createElement('a');a.href=url;a.download='porudzbine.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  document.querySelector('[data-export]').addEventListener('click',exportOrders);
+  for(const selector of ['[data-date-from]','[data-date-to]','[data-ops-filter]'])document.querySelector(selector).addEventListener('change',()=>loadOrders());
+
   loginForm.addEventListener('submit',async e=>{e.preventDefault();token=tokenInput.value.trim();if(!token)return;sessionStorage.setItem(KEY,token);showApp();await loadOrders(true)});
   logout.addEventListener('click',()=>{sessionStorage.removeItem(KEY);token='';selectedId='';tokenInput.value='';showLogin()});
   refresh.addEventListener('click',()=>loadOrders());
@@ -202,3 +246,4 @@
 
   if(token){showApp();loadOrders(true)}else showLogin();
 })();
+

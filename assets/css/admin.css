@@ -8,3 +8,11 @@
 @media(max-width:620px){.admin-modal{padding:10px;align-items:end}.admin-modal-card{width:100%;border-radius:22px 22px 14px 14px;padding:20px 17px}.admin-modal-actions{display:grid;grid-template-columns:1fr 1fr}.admin-modal-actions .btn{width:100%}}
 
 .admin-security-warning{display:grid;gap:4px;margin:0 0 18px;padding:14px 16px;border:1px solid #efd4a7;border-radius:14px;background:#fff7e8;color:#6b4b18;font-size:.86rem;line-height:1.5}.admin-security-warning strong{color:#66420b}.admin-security-warning span{color:#795a28}.admin-event-security{margin:8px 0;padding:10px 12px;border:1px solid #efd4a7;border-radius:12px;background:#fff9ed}.admin-event-security strong{color:#79500c}
+
+
+/* Operations toolbar and detail forms */
+.admin-toolbar{flex-wrap:wrap;align-items:end;gap:12px}
+.admin-toolbar>.field{min-width:140px;flex:1}
+.admin-box textarea{width:100%;box-sizing:border-box}
+.admin-detail-body>.admin-box{margin-top:20px}
+@media(max-width:640px){.admin-toolbar>.field,.admin-toolbar>button{width:100%;flex-basis:100%}}

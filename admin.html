@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <link rel="icon" href="/assets/img/favicon.png">
   <link rel="stylesheet" href="/assets/css/style.css?v=3.8.2">
-  <link rel="stylesheet" href="/assets/css/admin.css?v=1.2.0">
+  <link rel="stylesheet" href="/assets/css/admin.css?v=1.3.0">
 </head>
 <body class="admin-body">
   <header class="admin-header">
@@ -59,6 +59,10 @@
             </select>
           </div>
         </div>
+        <div class="field"><label for="date-from">Od datuma</label><input id="date-from" type="date" data-date-from></div>
+        <div class="field"><label for="date-to">Do datuma</label><input id="date-to" type="date" data-date-to></div>
+        <div class="field"><label for="ops-filter">Operativni filter</label><select id="ops-filter" data-ops-filter><option value="">Sve</option><option value="risk">Za proveru</option><option value="unpaid">Nenaplaćene</option><option value="ready">Spremne za slanje</option><option value="delivered">Isporučene</option><option value="returned">Vraćene</option><option value="failed">Neuspešna isporuka</option></select></div>
+        <button class="btn btn-secondary" type="button" data-export>Izvoz prikazanih (CSV)</button>
         <button class="btn btn-secondary" type="button" data-admin-refresh>Osveži</button>
       </div>
 
@@ -82,6 +86,7 @@
     </section>
   </main>
 
-  <script src="/assets/js/admin.js?v=1.2.0"></script>
+  <script src="/assets/js/admin.js?v=1.3.0"></script>
 </body>
 </html>
+

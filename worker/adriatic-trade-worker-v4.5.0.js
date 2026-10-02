@@ -318,7 +318,16 @@ async function handleCreateOrder(request, env, origin) {
 }
 
 async function handleAdmin(request, env, url, origin) {
-  if ((request.method === "POST") && !env.RESEND_API_KEY) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS order_operations (
+    order_id TEXT PRIMARY KEY, data_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 0
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS integration_jobs (
+    operation_key TEXT PRIMARY KEY, order_id TEXT NOT NULL, provider TEXT NOT NULL,
+    operation TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', external_id TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`).run();
+  if ((request.method === "POST") && /\/(confirm|ship|reject|cancel)$/.test(url.pathname) && !env.RESEND_API_KEY) {
     return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
   }
 
@@ -339,13 +348,17 @@ async function handleAdmin(request, env, url, origin) {
       params.push(needle, needle, needle, needle, needle, needle);
     }
 
+    for (const [key,op] of [['from','>='],['to','<=']]) {
+      const date=url.searchParams.get(key);
+      if(date && /^\d{4}-\d{2}-\d{2}$/.test(date)) { conditions.push(`substr(created_at,1,10) ${op} ?`); params.push(date); }
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const stmt = env.DB.prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT ?`).bind(...params, limit);
+    const stmt = env.DB.prepare(`SELECT orders.*, (SELECT data_json FROM order_operations WHERE order_id=orders.id) AS operations_json, EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='security_flag') AS security_flagged FROM orders ${where} ORDER BY created_at DESC LIMIT ?`).bind(...params, limit);
     const result = await stmt.all();
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
@@ -353,6 +366,37 @@ async function handleAdmin(request, env, url, origin) {
   const order = await getOrderById(env.DB, orderId);
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
 
+  if (request.method === "POST" && action === "operations") {
+    let body; try { body=await request.json(); } catch { return json({ok:false,error:'Neispravan zahtev.'},400,origin); }
+    const current=order.operations;
+    if (!Number.isInteger(body.revision) || body.revision!==order.operationsRevision) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
+    const next={...current};
+    const states={fulfillment:['pending','ready','shipped','delivered','returned','failed'],paymentStatus:['unpaid','paid','refunded'],riskReview:['pending','approved','rejected']};
+    for(const [key,values] of Object.entries(states)) {
+      if(body[key]!==undefined) { if(!values.includes(body[key])) return json({ok:false,error:'Neispravan status.'},400,origin); next[key]=body[key]; }
+    }
+    const allowed={pending:['ready'],ready:['pending'],shipped:['delivered','returned','failed'],failed:['delivered','returned'],delivered:['returned'],returned:[]};
+    const previous=current.fulfillment || (order.shippedAt?'shipped':'pending');
+    if(next.fulfillment!==previous && !(allowed[previous]||[]).includes(next.fulfillment)) return json({ok:false,error:'Nedozvoljena promena isporuke. Slanje se evidentira kroz Predaju kuriru.'},409,origin);
+    if(['new','rejected','cancelled'].includes(order.status) && next.fulfillment==='ready') return json({ok:false,error:'Prvo potvrdite porudžbinu.'},409,origin);
+    if(next.paymentStatus==='refunded' && !['paid','refunded'].includes(current.paymentStatus)) return json({ok:false,error:'Refundiranje zahteva evidentiranu naplatu.'},409,origin);
+    for(const [key,max] of [['internalNote',2000],['paymentReference',160],['fiscalNumber',160],['fiscalProvider',100],['fiscalReference',160]]) if(body[key]!==undefined) next[key]=clean(body[key],max);
+    if(body.remittanceDate!==undefined) { if(body.remittanceDate && !/^\d{4}-\d{2}-\d{2}$/.test(body.remittanceDate)) return json({ok:false,error:'Neispravan datum.'},400,origin); next.remittanceDate=body.remittanceDate; }
+    // Manual linking only: issuing fiscal documents is reserved for the provider adapter.
+    next.fiscalStatus=next.fiscalNumber?'linked':'not_linked';
+    const reason=clean(body.reason,500);
+    if(!reason) return json({ok:false,error:'Unesite razlog izmene.'},400,origin);
+    const now=new Date().toISOString();
+    const changed=Object.keys(next).filter(k=>JSON.stringify(next[k])!==JSON.stringify(current[k]));
+    if(!changed.length) return json({ok:true,order},200,origin);
+    const note=JSON.stringify({actor:'Administrator (zajednički ključ)',reason,changes:changed.map(key=>({key,before:current[key]??'',after:next[key]}))});
+    const results=await env.DB.batch([
+      env.DB.prepare('UPDATE order_operations SET data_json=?,revision=revision+1 WHERE order_id=? AND revision=?').bind(JSON.stringify(next),order.id,body.revision),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'operations', ?, ? WHERE changes()=1").bind(order.id,note,now)
+    ]);
+    if(!results[0].meta.changes) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
+    return json({ok:true,order:await getOrderById(env.DB,order.id)},200,origin);
+  }
   if (request.method === "GET" && !action) {
     return json({ ok: true, order }, 200, origin);
   }
@@ -626,7 +670,11 @@ async function getOrderBySubmissionId(db, submissionId) {
 async function getOrderById(db, id) {
   const row = await db.prepare("SELECT * FROM orders WHERE id = ? LIMIT 1").bind(id).first();
   if (!row) return null;
+  await db.prepare("INSERT OR IGNORE INTO order_operations(order_id) VALUES (?)").bind(id).run();
+  const operations=await db.prepare('SELECT data_json,revision FROM order_operations WHERE order_id=?').bind(id).first();
+  row.operations_json=operations?.data_json;
   const order = rowToOrder(row);
+  order.operationsRevision=operations?.revision || 0;
   const events = await db.prepare("SELECT event_type, note, created_at FROM order_events WHERE order_id = ? ORDER BY id ASC").bind(id).all();
   order.events = events.results || [];
   return order;
@@ -635,7 +683,11 @@ async function getOrderById(db, id) {
 function rowToOrder(row) {
   let items = [];
   try { items = JSON.parse(row.items_json || "[]"); } catch { items = []; }
+  let operations={}; try { operations=JSON.parse(row.operations_json || '{}'); } catch {}
+  operations={fulfillment:row.shipped_at?'shipped':'pending',paymentStatus:'unpaid',riskReview:'pending',...operations};
+  if(row.shipped_at && ['pending','ready'].includes(operations.fulfillment)) operations.fulfillment='shipped';
   return {
+    operations, securityFlagged:Boolean(row.security_flagged),
     id: row.id,
     submissionId: row.submission_id,
     createdAt: row.created_at,
@@ -674,7 +726,7 @@ function rowToOrder(row) {
 async function addOrderEvent(db, orderId, eventType, note) {
   try {
     await db.prepare("INSERT INTO order_events (order_id, event_type, note, created_at) VALUES (?, ?, ?, ?)")
-      .bind(orderId, eventType, note || null, new Date().toISOString()).run();
+      .bind(orderId, eventType, (eventType === "security_flag" || eventType === "created" ? note : "Administrator (zajednički ključ) · " + (note || "")) || null, new Date().toISOString()).run();
   } catch (error) {
     console.error("Unable to write order event", error);
   }
@@ -1347,3 +1399,4 @@ function json(data, status = 200, origin = "", extraHeaders = {}) {
   if (ALLOWED_ORIGINS.has(origin)) Object.assign(headers, corsHeaders(origin));
   return new Response(JSON.stringify(data), { status, headers });
 }
+
