@@ -1,0 +1,69 @@
+name: Deploy Adriatic Trade Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/adriatic-trade-worker-v4.5.0.js"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Discover existing D1 database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database")
+          DB_ID=$(printf '%s' "$RESPONSE" | jq -r '.result[] | select(.name == "adriatic-trade-orders-db") | (.uuid // .id)' | head -n 1)
+          test -n "$DB_ID"
+          test "$DB_ID" != "null"
+          echo "D1_DATABASE_ID=$DB_ID" >> "$GITHUB_ENV"
+
+      - name: Create deployment configuration
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          jq -n \
+            --arg account_id "$CLOUDFLARE_ACCOUNT_ID" \
+            --arg database_id "$D1_DATABASE_ID" \
+            '{
+              name: "adriatic-trade-orders",
+              main: "worker/adriatic-trade-worker-v4.5.0.js",
+              compatibility_date: "2026-10-02",
+              account_id: $account_id,
+              d1_databases: [{binding: "DB", database_name: "adriatic-trade-orders-db", database_id: $database_id}],
+              r2_buckets: [{binding: "RECEIPTS", bucket_name: "adriatic-trade-receipts"}],
+              vars: {TURNSTILE_SITE_KEY: "0x4AAAAAAFEPtKXCu1OUJtJ2"}
+            }' > wrangler.deploy.json
+
+      - name: Deploy Worker v4.5.0
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy --config wrangler.deploy.json
+
+      - name: Verify production Worker
+        run: |
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            https://adriatic-trade-orders.lakifinance.workers.dev/)
+          printf '%s\n' "$RESPONSE"
+          printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.5.0" and .database == true and .receipts == true and .security == true'
