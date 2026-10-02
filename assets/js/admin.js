@@ -211,7 +211,7 @@
   function eventNote(e){if(e.event_type!=='operations')return e.note;try{const n=JSON.parse(e.note);return n.actor+' · '+n.reason+' · '+n.changes.map(c=>c.key+': '+(opsLabels[c.before]||c.before||'—')+' → '+(opsLabels[c.after]||c.after||'—')).join('; ')}catch{return e.note}}
   function operationsForm(o){const v=o.operations||{};
     const field=(name,label,type='text')=>`<div class="field"><label>${label}<input name="${name}" type="${type}" value="${esc(v[name]||'')}" maxlength="160"></label></div>`;
-    const select=(name,label,values)=>`<div class="field"><label>${label}<select name="${name}">${values.map(x=>`<option value="${x}" ${v[name]===x?'selected':''}>${opsLabels[x]}</option>`).join('')}</select></label></div>`;
+    const select=(name,label,values)=>`<div class="field"><label>${label}<select name="${name}">${values.map(x=>`<option value="${x}" ${v[name]===x?'selected':''}>${name==='riskReview'&&x==='pending'?'Čeka proveru':opsLabels[x]}</option>`).join('')}</select></label></div>`;
     return `<div class="admin-box"><h3>Operativna evidencija</h3><form data-operations class="admin-ship-form">
       ${select('fulfillment','Isporuka',['pending','ready','shipped','delivered','returned','failed'])}
       ${select('paymentStatus','Naplata',['unpaid','paid','refunded'])}
