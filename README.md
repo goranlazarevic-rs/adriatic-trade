@@ -1,14 +1,14 @@
-# Adriatic Trade website v3.15.0
+# Adriatic Trade website v3.17.0
 
 Stabilna v3.14.0 prodajna i analytics osnova, nadograđena premium homepage storytellingom za Solanu Nin i jasnijim B2B ulazom za Adriatic Trade.
 
 ## Produkciona osnova koja ostaje nepromenjena
-- 5 SKU proizvoda i postojeće maloprodajne cene sa PDV-om
+- 5 SKU proizvoda sa aktuelnim maloprodajnim cenama sa PDV-om
 - paketi Probaj / Za svaki dan / Premium
 - korpa, količine `− / +`, Smart Cart i checkout
-- dostava 390 RSD / besplatna od 2.500 RSD
+- dostava 420 RSD / besplatna od 3.500 RSD
 - plaćanje pouzećem
-- Cloudflare Worker v4.3.0 + D1 + R2
+- Cloudflare Worker v4.5.0 + D1 + R2
 - GA4 `G-WX8JF1GHRT`, consent i ecommerce tracking
 
 ## v3.15.0 Premium Brand Story
@@ -22,7 +22,14 @@ Stabilna v3.14.0 prodajna i analytics osnova, nadograđena premium homepage stor
 - desktop B2B dugme jasno izdvojeno u navigaciji
 - na mobilnom B2B saradnja istaknuta u hamburger meniju; korpa ostaje stalno vidljiva u headeru
 
+## v3.17.0 Cene i dostava
+- proizvodi: 600 / 800 / 299 / 299 / 550 RSD
+- paketi: 1.150 / 1.650 / 1.800 RSD
+- WEB AKCIJA za SKU 10240 ostaje 499 RSD do 26.10.2026.
+- dostava je 420 RSD, besplatna od 3.500 RSD
+- frontend, checkout, Worker validacija i pravna dokumentacija koriste iste vrednosti
+
 ## Važno
 - Product kartice i kupovne reference koriste aktuelne SKU fotografije za tržište Srbije.
 - Storytelling fotografije služe za poreklo, proces i brend atmosferu.
-- Worker nije potrebno menjati: ostaje v4.3.0.
+- Worker v4.5.0 mora biti objavljen pre frontenda v3.17.0.
