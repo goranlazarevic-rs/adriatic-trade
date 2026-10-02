@@ -1,15 +1,15 @@
 const PRODUCTS={
- '10086':{sku:'10086',slug:'cvet-soli-100g',name:'Cvet soli - natron kesa 100 g',shortName:'Cvet soli 100 g',price:599,img:'/assets/img/products/cvet-soli-100g.png'},
- '10012':{sku:'10012',slug:'cvet-soli-125g',name:'Cvet soli - kutija sa plutanim poklopcem 125 g',shortName:'Cvet soli 125 g',price:799,img:'/assets/img/products/cvet-soli-125g.png'},
+ '10086':{sku:'10086',slug:'cvet-soli-100g',name:'Cvet soli - natron kesa 100 g',shortName:'Cvet soli 100 g',price:600,img:'/assets/img/products/cvet-soli-100g.png'},
+ '10012':{sku:'10012',slug:'cvet-soli-125g',name:'Cvet soli - kutija sa plutanim poklopcem 125 g',shortName:'Cvet soli 125 g',price:800,img:'/assets/img/products/cvet-soli-125g.png'},
  '10306':{sku:'10306',slug:'nerafinisana-sitna-600g',name:'BIO nerafinisana sitna morska so 600 g ZIP',shortName:'BIO sitna 600 g',price:299,img:'/assets/img/products/nerafinisana-sitna-600g.png'},
  '10307':{sku:'10307',slug:'nerafinisana-krupna-600g',name:'BIO nerafinisana krupna morska so 600 g ZIP',shortName:'BIO krupna 600 g',price:299,img:'/assets/img/products/nerafinisana-krupna-600g.png'},
- '10240':{sku:'10240',slug:'nerafinisana-sitna-500g',name:'BIO nerafinisana sitna morska so 500 g - kutija sa poklopcem',shortName:'BIO sitna 500 g kutija',price:549,img:'/assets/img/products/nerafinisana-sitna-500g.png'},
- 'PKT-PROBA':{sku:'PKT-PROBA',name:'Probaj',price:1149,img:'/assets/img/story-premium/salt-in-hands.webp',detail:'Cvet soli 100 g + sitna 600 g ZIP + krupna 600 g ZIP'},
- 'PKT-GURMAN':{sku:'PKT-GURMAN',name:'Za svaki dan',price:1649,img:'/assets/img/story-premium/harvest-workers-wide.webp',detail:'BIO nerafinisana sitna morska so 500 g - kutija + sitna 600 g ZIP + krupna 600 g ZIP + Cvet soli 100 g'},
- 'PKT-KOMPLET':{sku:'PKT-KOMPLET',name:'Premium',price:1799,img:'/assets/img/story-premium/fleur-rake.webp',detail:'BIO nerafinisana sitna morska so 500 g - kutija + Cvet soli 125 g + Cvet soli 100 g'}
+ '10240':{sku:'10240',slug:'nerafinisana-sitna-500g',name:'BIO nerafinisana sitna morska so 500 g - kutija sa poklopcem',shortName:'BIO sitna 500 g kutija',price:550,img:'/assets/img/products/nerafinisana-sitna-500g.png'},
+ 'PKT-PROBA':{sku:'PKT-PROBA',name:'Probaj',price:1150,img:'/assets/img/story-premium/salt-in-hands.webp',detail:'Cvet soli 100 g + sitna 600 g ZIP + krupna 600 g ZIP'},
+ 'PKT-GURMAN':{sku:'PKT-GURMAN',name:'Za svaki dan',price:1650,img:'/assets/img/story-premium/harvest-workers-wide.webp',detail:'BIO nerafinisana sitna morska so 500 g - kutija + sitna 600 g ZIP + krupna 600 g ZIP + Cvet soli 100 g'},
+ 'PKT-KOMPLET':{sku:'PKT-KOMPLET',name:'Premium',price:1800,img:'/assets/img/story-premium/fleur-rake.webp',detail:'BIO nerafinisana sitna morska so 500 g - kutija + Cvet soli 125 g + Cvet soli 100 g'}
 };
-const FREE_SHIPPING=2500;
-const SHIPPING_FEE=390;
+const FREE_SHIPPING=3500;
+const SHIPPING_FEE=420;
 const AT_ANALYTICS=window.AT_ANALYTICS_CONFIG||{};
 const GA_MEASUREMENT_ID=String(AT_ANALYTICS.measurementId||'').trim();
 const GA_ENABLED=AT_ANALYTICS.enabled!==false&&/^G-[A-Z0-9]+$/i.test(GA_MEASUREMENT_ID)&&!GA_MEASUREMENT_ID.includes('XXXX');
@@ -79,7 +79,7 @@ function trackPendingPurchase(){
  try{sessionStorage.setItem(sentKey,'1');sessionStorage.removeItem('at_pending_purchase_event')}catch(e){}clearSmartCartUsed();
 }
 const PROMOTIONS={
- '10240':{regularPrice:549,promoPrice:499,start:'2026-09-27',end:'2026-10-27',label:'WEB AKCIJA',validUntil:'26.10.2026.'}
+ '10240':{regularPrice:550,promoPrice:499,start:'2026-09-27',end:'2026-10-27',label:'WEB AKCIJA',validUntil:'26.10.2026.'}
 };
 function belgradeDateKey(date=new Date()){
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Belgrade',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
@@ -104,7 +104,7 @@ function applyPromoDisplay(){
  };
  Object.entries(bundleValues).forEach(([sku,v])=>{
    document.querySelectorAll(`[data-bundle-regular="${sku}"]`).forEach(el=>el.textContent=fmt(v.regular));
-   document.querySelectorAll(`[data-bundle-saving="${sku}"]`).forEach(el=>el.textContent=`Ušteda ${fmt(v.regular-v.offer)} • besplatna dostava od 2.500 RSD`);
+   document.querySelectorAll(`[data-bundle-saving="${sku}"]`).forEach(el=>el.textContent=`Ušteda ${fmt(v.regular-v.offer)} • besplatna dostava od 3.500 RSD`);
  });
 }
 applyScheduledPrices();
@@ -163,7 +163,7 @@ function smartTopUpHtml(rec){
      : `Dostava postaje besplatna. U odnosu na trenutnu korpu sa dostavom, za još <b>${fmt(rec.difference)}</b> dobijate dodatni proizvod.`;
  return `<div class="smart-topup"><div class="smart-topup-kicker">Predlog za besplatnu dostavu</div><div class="smart-topup-title">Dodajte ${rec.name} za ${fmt(rec.price)}</div><p>Do praga nedostaje ${fmt(rec.remain)}. ${valueCopy}</p><button class="btn btn-secondary btn-small" type="button" data-smart-add="${rec.sku}">Dodaj predlog u korpu</button></div>`;
 }
-function renderSummary(){const box=document.querySelector('[data-cart-summary]');if(!box)return;const c=getCart(),t=cartTotal(c),free=getsFreeShipping(c),shipping=free?0:SHIPPING_FEE,total=t+shipping,remain=Math.max(0,FREE_SHIPPING-t),pct=Math.min(100,t/FREE_SHIPPING*100),rec=free?null:getSmartTopUp(c);const progressCopy=free?'Ostvarili ste besplatnu dostavu.':rec?'':('Još '+fmt(remain)+' do besplatne dostave.');box.innerHTML=`<div class="order-box"><h2 class="h3">Pregled porudžbine</h2><div class="order-line"><span>Vrednost robe</span><b>${fmt(t)}</b></div><div class="order-line"><span>Dostava</span><b>${free?'Besplatna':fmt(shipping)}</b></div><div class="free-progress"><span style="width:${pct}%"></span></div>${progressCopy?`<p class="muted" style="font-size:.88rem">${progressCopy}</p>`:''}${smartTopUpHtml(rec)}<div class="order-total"><span>Ukupno za plaćanje</span><span>${fmt(total)}</span></div><a class="btn btn-primary" style="width:100%;margin-top:18px" href="/checkout.html">Nastavi na poručivanje</a><p class="muted" style="font-size:.78rem;margin-bottom:0">Plaćanje pouzećem. Dostava je 390 RSD za porudžbine ispod 2.500 RSD, a besplatna od 2.500 RSD.</p></div>`;if(rec)trackSmartCartShown(rec,c);const add=box.querySelector('[data-smart-add]');if(add)add.onclick=()=>{trackSmartCartAdded(rec);addToCart(add.dataset.smartAdd,1,'smart_cart');renderCart()}}
+function renderSummary(){const box=document.querySelector('[data-cart-summary]');if(!box)return;const c=getCart(),t=cartTotal(c),free=getsFreeShipping(c),shipping=free?0:SHIPPING_FEE,total=t+shipping,remain=Math.max(0,FREE_SHIPPING-t),pct=Math.min(100,t/FREE_SHIPPING*100),rec=free?null:getSmartTopUp(c);const progressCopy=free?'Ostvarili ste besplatnu dostavu.':rec?'':('Još '+fmt(remain)+' do besplatne dostave.');box.innerHTML=`<div class="order-box"><h2 class="h3">Pregled porudžbine</h2><div class="order-line"><span>Vrednost robe</span><b>${fmt(t)}</b></div><div class="order-line"><span>Dostava</span><b>${free?'Besplatna':fmt(shipping)}</b></div><div class="free-progress"><span style="width:${pct}%"></span></div>${progressCopy?`<p class="muted" style="font-size:.88rem">${progressCopy}</p>`:''}${smartTopUpHtml(rec)}<div class="order-total"><span>Ukupno za plaćanje</span><span>${fmt(total)}</span></div><a class="btn btn-primary" style="width:100%;margin-top:18px" href="/checkout.html">Nastavi na poručivanje</a><p class="muted" style="font-size:.78rem;margin-bottom:0">Plaćanje pouzećem. Dostava je 420 RSD za porudžbine ispod 3.500 RSD, a besplatna od 3.500 RSD.</p></div>`;if(rec)trackSmartCartShown(rec,c);const add=box.querySelector('[data-smart-add]');if(add)add.onclick=()=>{trackSmartCartAdded(rec);addToCart(add.dataset.smartAdd,1,'smart_cart');renderCart()}}
 function cartFingerprint(entries){return entries.map(([sku,q])=>`${sku}:${q}`).sort().join('|')}
 function makeSubmissionId(){const d=new Date(),date=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;let token='';if(window.crypto?.randomUUID)token=crypto.randomUUID();else if(window.crypto?.getRandomValues){const a=new Uint32Array(4);crypto.getRandomValues(a);token=Array.from(a,x=>x.toString(16).padStart(8,'0')).join('-')}else token=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,12)}`;return `${date}-${token}`}
 function getSubmissionId(fingerprint){try{const saved=JSON.parse(sessionStorage.getItem('at_pending_order')||'null');if(saved?.id&&saved?.fingerprint===fingerprint)return saved.id}catch(e){}const id=makeSubmissionId();try{sessionStorage.setItem('at_pending_order',JSON.stringify({id,fingerprint}))}catch(e){}return id}
@@ -205,7 +205,7 @@ function setupMobileOrderBar(){
  const bar=document.createElement('div');bar.className='mobile-order-bar';
  const sku=document.body.dataset.productSku;const p=sku?PRODUCTS[sku]:null;
  if(p){bar.innerHTML=`<div class="mobile-order-copy"><b>${fmt(p.price)}</b><small>${p.name}</small></div><div class="mobile-order-action"><button class="btn btn-primary" data-mobile-add="${p.sku}">Dodaj u korpu</button><div class="mobile-cart-control hidden" data-mobile-cart="${p.sku}"><button type="button" data-mobile-minus="${p.sku}" aria-label="Smanji količinu ${p.name}">−</button><strong data-mobile-qty="${p.sku}" aria-live="polite">1</strong><button type="button" data-mobile-plus="${p.sku}" aria-label="Povećaj količinu ${p.name}">+</button><span>u korpi</span></div></div>`;bar.querySelector('[data-mobile-add]').onclick=()=>addToCart(p.sku,1,'mobile_sticky');bar.querySelector('[data-mobile-minus]').onclick=()=>changeCartQuantity(p.sku,-1);bar.querySelector('[data-mobile-plus]').onclick=()=>changeCartQuantity(p.sku,1)}
- else{bar.innerHTML=`<div class="mobile-order-copy"><b>Poručite online</b><small>Dostava 390 RSD • besplatna od 2.500</small></div><a class="btn btn-primary" href="/proizvodi.html">Poruči</a>`}
+ else{bar.innerHTML=`<div class="mobile-order-copy"><b>Poručite online</b><small>Dostava 420 RSD • besplatna od 3.500</small></div><a class="btn btn-primary" href="/proizvodi.html">Poruči</a>`}
  document.body.classList.add('has-mobile-order-bar');document.body.appendChild(bar)
 }
 
