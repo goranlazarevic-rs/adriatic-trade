@@ -1,4 +1,5 @@
 name: Deploy Adriatic Trade Worker
+# Production deployment for Worker v4.5.0
 
 on:
   push:
