@@ -56,7 +56,7 @@
     try{
       const data=await api('/admin/orders?'+params.toString());
       const mode=document.querySelector('[data-ops-filter]').value;
-      orders=(data.orders||[]).filter(o=>!mode || (mode==='risk'?o.securityFlagged&&o.operations.riskReview==='pending':mode==='unpaid'?o.operations.paymentStatus==='unpaid':o.operations.fulfillment===mode));
+      orders=(data.orders||[]).filter(o=>!mode || (!['rejected','cancelled'].includes(o.status) && (mode==='risk'?o.securityFlagged&&o.operations.riskReview==='pending':mode==='unpaid'?o.operations.paymentStatus==='unpaid':o.operations.fulfillment===mode)));
       count.textContent=orders.length+(data.orders?.length===100?' (limit 100; suzite datume)':'');
       const active=orders.filter(o=>!['rejected','cancelled'].includes(o.status));
       document.querySelector('[data-sales-summary]').textContent='Prikazane porudžbine: '+orders.length+' · Aktivne: '+active.length+' · Vrednost robe: '+money(active.reduce((n,o)=>n+o.goodsTotal,0))+' · Naplaćeno (sa dostavom): '+money(orders.filter(o=>o.operations.paymentStatus==='paid').reduce((n,o)=>n+o.total,0));
@@ -210,6 +210,19 @@
   const opsLabels={pending:'Čeka pripremu',ready:'Spremna za slanje',shipped:'Poslata',delivered:'Isporučena',returned:'Vraćena',failed:'Neuspešna isporuka',unpaid:'Nenaplaćena',paid:'Naplaćena',refunded:'Refundirana',approved:'Proverena — prihvatljiva',rejected:'Proverena — odbijena'};
   function eventNote(e){if(e.event_type!=='operations')return e.note;try{const n=JSON.parse(e.note);return n.actor+' · '+n.reason+' · '+n.changes.map(c=>c.key+': '+(opsLabels[c.before]||c.before||'—')+' → '+(opsLabels[c.after]||c.after||'—')).join('; ')}catch{return e.note}}
   function operationsForm(o){const v=o.operations||{};
+    if(['rejected','cancelled'].includes(o.status)) {
+      return `<div class="admin-box admin-operations-locked"><h3>Operativna evidencija — zaključana</h3><p>Porudžbina je ${o.status==='rejected'?'odbijena':'otkazana'}. Priprema, isporuka i štampanje nalepnice su obustavljeni. Sačuvani podaci i istorija ostaju dostupni za pregled.</p><div class="admin-info">
+        ${row('Isporuka','Obustavljena')}
+        ${row('Evidentirana naplata',opsLabels[v.paymentStatus]||'Nenaplaćena')}
+        ${row('Datum prenosa novca od kurira',v.remittanceDate||'—')}
+        ${row('Referenca naplate / refundacije',v.paymentReference||'—')}
+        ${row('Provera porudžbine',v.riskReview==='pending'?'Nije završena':opsLabels[v.riskReview]||'—')}
+        ${row('Interna beleška',v.internalNote||'—')}
+        ${row('Fiskalni sistem',v.fiscalProvider||'—')}
+        ${row('Broj fiskalnog računa',v.fiscalNumber||'—')}
+        ${row('Referenca izvornog računa / refundacije',v.fiscalReference||'—')}
+      </div></div>`;
+    }
     const field=(name,label,type='text')=>`<div class="field"><label>${label}<input name="${name}" type="${type}" value="${esc(v[name]||'')}" maxlength="160"></label></div>`;
     const select=(name,label,values)=>`<div class="field"><label>${label}<select name="${name}">${values.map(x=>`<option value="${x}" ${v[name]===x?'selected':''}>${name==='riskReview'&&x==='pending'?'Čeka proveru':opsLabels[x]}</option>`).join('')}</select></label></div>`;
     return `<div class="admin-box"><h3>Operativna evidencija</h3><form data-operations class="admin-ship-form">

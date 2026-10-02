@@ -367,6 +367,9 @@ async function handleAdmin(request, env, url, origin) {
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
 
   if (request.method === "POST" && action === "operations") {
+    if (['rejected','cancelled'].includes(order.status)) {
+      return json({ok:false,error:'Operativna evidencija odbijene ili otkazane porudžbine je zaključana.'},409,origin);
+    }
     let body; try { body=await request.json(); } catch { return json({ok:false,error:'Neispravan zahtev.'},400,origin); }
     const current=order.operations;
     if (!Number.isInteger(body.revision) || body.revision!==order.operationsRevision) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
@@ -391,7 +394,7 @@ async function handleAdmin(request, env, url, origin) {
     if(!changed.length) return json({ok:true,order},200,origin);
     const note=JSON.stringify({actor:'Administrator (zajednički ključ)',reason,changes:changed.map(key=>({key,before:current[key]??'',after:next[key]}))});
     const results=await env.DB.batch([
-      env.DB.prepare('UPDATE order_operations SET data_json=?,revision=revision+1 WHERE order_id=? AND revision=?').bind(JSON.stringify(next),order.id,body.revision),
+      env.DB.prepare("UPDATE order_operations SET data_json=?,revision=revision+1 WHERE order_id=? AND revision=? AND EXISTS (SELECT 1 FROM orders WHERE id=order_operations.order_id AND status NOT IN ('rejected','cancelled'))").bind(JSON.stringify(next),order.id,body.revision),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'operations', ?, ? WHERE changes()=1").bind(order.id,note,now)
     ]);
     if(!results[0].meta.changes) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);

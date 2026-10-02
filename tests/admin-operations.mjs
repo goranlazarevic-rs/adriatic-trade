@@ -27,8 +27,22 @@ assert.equal((await post({revision:3,paymentStatus:'refunded',reason:'Povraćaj'
 o=await get();assert.equal(o.operations.paymentStatus,'refunded');assert.equal(o.total,1020);assert.equal(o.items[0].unitPrice,600);assert.equal(o.events.length,4);
 for(const e of o.events)assert.ok(JSON.parse(e.note).actor);
 const list=await ctx.runAdmin(new Request('https://test/admin/orders?from=2026-10-03'));assert.equal((await list.json()).orders.length,0);
+for (const terminal of ['rejected','cancelled']) {
+  sqlite.prepare('UPDATE orders SET status=? WHERE id=?').run(terminal,'AT-TEST');
+  const before=await get();
+  const blocked=await post({revision:before.operationsRevision,paymentStatus:'paid',internalNote:'Nedozvoljena izmena',reason:'Test zaključavanja'});
+  assert.equal(blocked.status,409);
+  const after=await get();assert.deepEqual(after.operations,before.operations);assert.equal(after.operationsRevision,before.operationsRevision);assert.equal(after.events.length,before.events.length);
+}
 ctx.env={DB:db,ADMIN_TOKEN:'synthetic-admin-secret'};
 vm.runInContext('globalThis.runFetch=(request)=>worker.fetch(request,env,{});',ctx);
 const unauthorized=await ctx.runFetch(new Request('https://test/admin/orders',{headers:{Origin:'https://adriatictrade.rs'}}));assert.equal(unauthorized.status,401);
 const badOrigin=await ctx.runFetch(new Request('https://test/admin/orders',{headers:{Origin:'https://evil.example',Authorization:'Bearer synthetic-admin-secret'}}));assert.equal(badOrigin.status,403);
 console.log('PASS: state transitions, payments, optimistic locking, audit events, immutable prices, date filters, manual fiscal linking.');
+
+const uiSource=fs.readFileSync('assets/js/admin.js','utf8');
+const formSource=uiSource.slice(uiSource.indexOf('  function operationsForm('),uiSource.indexOf('  function printLabel('));
+const ui=vm.createContext({opsLabels:{unpaid:'Nenaplaćena'},esc:v=>String(v??'').replaceAll('<','&lt;'),row:(k,v)=>`${k}: ${String(v).replaceAll('<','&lt;')}`});vm.runInContext(formSource,ui);
+for(const status of ['rejected','cancelled']){const html=ui.operationsForm({status,operations:{internalNote:'<script>test</script>',paymentStatus:'unpaid'}});assert.match(html,/zaključana/);assert.doesNotMatch(html,/<(?:input|select|textarea|button|form)\b/);assert.doesNotMatch(html,/<script>/);assert.match(html,/Obustavljena/);}
+assert.match(ui.operationsForm({status:'confirmed',operations:{}}),/data-operations/);
+console.log('PASS: rejected/cancelled read-only UI; active order form preserved.');
