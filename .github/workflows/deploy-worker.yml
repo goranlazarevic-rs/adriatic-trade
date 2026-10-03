@@ -1,5 +1,5 @@
 name: Deploy Adriatic Trade Worker
-# Production deployment for Worker v4.5.0
+# Production deployment for Worker v4.5.1
 
 on:
   push:
@@ -56,7 +56,7 @@ jobs:
               vars: {TURNSTILE_SITE_KEY: "0x4AAAAAAFEPtKXCu1OUJtJ2"}
             }' > wrangler.deploy.json
 
-      - name: Deploy Worker v4.5.0
+      - name: Deploy Worker v4.5.1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -67,4 +67,4 @@ jobs:
           RESPONSE=$(curl --fail-with-body --silent --show-error \
             https://adriatic-trade-orders.lakifinance.workers.dev/)
           printf '%s\n' "$RESPONSE"
-          printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.5.0" and .database == true and .receipts == true and .security == true'
+          printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.5.1" and .database == true and .receipts == true and .security == true'

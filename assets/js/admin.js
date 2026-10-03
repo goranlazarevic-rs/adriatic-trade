@@ -92,7 +92,8 @@
     const events=(o.events||[]).map(e=>`<div class="admin-event ${e.event_type==='security_flag'?'admin-event-security':''}"><strong>${esc(eventTitle(e.event_type))}</strong>${e.note?`<div>${esc(eventNote(e))}</div>`:''}<time>${esc(dt(e.created_at))}</time></div>`).join('')||'<div class="muted">Nema događaja.</div>';
     const address=o.delivery.method==='Dostava na adresu'?`${o.delivery.address}, ${o.delivery.postalCode} ${o.delivery.city}`:`Paketomat · ${o.delivery.postalCode} ${o.delivery.city}`;
     let actions='';
-    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email.</p><div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
+    const localDeliveryEligible=o.status==='new'&&o.delivery.method==='Dostava na adresu'&&String(o.delivery.city||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()==='novi sad'&&o.shipping>0;
+    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email sa konačnim iznosom.</p>${localDeliveryEligible?`<div class="notice"><b>Adresa je u Novom Sadu.</b> Ako je adresa u užem centru i dostavljate lično, prvo odobrite besplatnu lokalnu dostavu. Ukupan iznos biće umanjen za ${esc(money(o.shipping))}.</div><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-secondary" type="button" data-local-delivery>Odobri besplatnu lokalnu dostavu</button></div>`:o.shipping===0&&String(o.delivery.city||'').toLowerCase().includes('novi sad')?'<div class="notice"><b>Besplatna dostava je odobrena.</b> Kupac će konačni iznos videti u emailu potvrde.</div>':''}<div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
     if(o.status==='confirmed')actions=`<div class="admin-actions"><h3>Predaja kuriru</h3><p>Unesite podatke pošiljke. Fiskalni račun može biti dodat kao PDF i biće poslat kupcu u prilogu.</p><form class="admin-ship-form" data-ship-form>
       <div class="field"><label>Kurirska služba *</label><input name="courier" placeholder="npr. D Express" required></div>
       <div class="field"><label>Broj pošiljke *</label><input name="trackingNumber" required></div>
@@ -125,6 +126,7 @@
     });
     detail.querySelector('[data-print-label]')?.addEventListener('click',()=>printLabel(o));
     detail.querySelector('[data-confirm]')?.addEventListener('click',()=>confirmOrder(o.id));
+    detail.querySelector('[data-local-delivery]')?.addEventListener('click',()=>approveLocalDelivery(o.id));
     detail.querySelector('[data-reject]')?.addEventListener('click',()=>openDecisionDialog('reject',o.id));
     detail.querySelector('[data-cancel]')?.addEventListener('click',()=>openDecisionDialog('cancel',o.id));
     detail.querySelector('[data-ship-form]')?.addEventListener('submit',e=>shipOrder(e,o.id));
@@ -133,7 +135,7 @@
 
   function row(label,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
   function rowLink(label,href,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong><a class="admin-link" href="${esc(href)}">${esc(value)}</a></strong></div>`}
-  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira'}[v]||v)}
+  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira',local_delivery_approved:'Odobrena lokalna dostava'}[v]||v)}
 
   function lastDecisionNote(o,type){
     const ev=[...(o.events||[])].reverse().find(e=>e.event_type===type);
@@ -189,6 +191,16 @@
     if(!confirm('Potvrditi porudžbinu i poslati kupcu email potvrde?'))return;
     setBusy(detail,true);
     try{const data=await api('/admin/orders/'+encodeURIComponent(id)+'/confirm',{method:'POST'});notify('Porudžbina je potvrđena. Email je poslat kupcu.','success');await loadOrders();renderDetail(data.order)}catch(err){notify(err.message)}finally{setBusy(detail,false)}
+  }
+
+  async function approveLocalDelivery(id){
+    if(!confirm('Odobriti besplatnu lokalnu dostavu? Dostava će biti 0 RSD, a ukupan iznos porudžbine biće umanjen.'))return;
+    setBusy(detail,true);
+    try{
+      const data=await api('/admin/orders/'+encodeURIComponent(id)+'/local-delivery',{method:'POST'});
+      notify('Besplatna lokalna dostava je odobrena. Sada potvrdite porudžbinu.','success');
+      await loadOrders();renderDetail(data.order);
+    }catch(err){notify(err.message)}finally{setBusy(detail,false)}
   }
 
   async function shipOrder(e,id){
@@ -292,4 +304,3 @@
 
   if(token){showApp();loadOrders(true)}else showLogin();
 })();
-

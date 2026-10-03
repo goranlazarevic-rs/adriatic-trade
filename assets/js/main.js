@@ -176,9 +176,19 @@ function renderCheckout(){
  const t=cartTotal(c),free=getsFreeShipping(c),shipping=free?0:SHIPPING_FEE,total=t+shipping;
  if(sessionOnce(`ga_begin_checkout:${cartFingerprint(entries)}`))gaEvent('begin_checkout',{currency:GA_CURRENCY,value:t,shipping,order_total:total,items:gaItemsFromCart(c)});
  root.innerHTML=`<div class="checkout-summary"><h3 class="h3">Vaša porudžbina</h3><p class="muted">Broj porudžbine biće dodeljen nakon uspešnog slanja.</p>${entries.map(([sku,q])=>`<div class="order-line"><span>${PRODUCTS[sku].name} × ${q}</span><b>${fmt(PRODUCTS[sku].price*q)}</b></div>`).join('')}<div class="order-line"><span>Dostava</span><b>${free?'0 RSD - besplatna':fmt(shipping)}</b></div><div class="order-total"><span>Ukupno za plaćanje</span><span>${fmt(total)}</span></div></div>`;
- const address=form.querySelector('[name="Adresa"]'),addressLabel=document.querySelector('[data-address-label]'),addressField=document.querySelector('[data-address-field]'),deliveryRadios=form.querySelectorAll('[name="Nacin isporuke"]'),parcelNote=document.querySelector('[data-parcel-note]');
- function syncDelivery(){const method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu',parcel=method==='Paketomat';if(address){address.required=!parcel;address.placeholder='Ulica i broj';if(parcel)address.value=''}if(addressLabel)addressLabel.textContent='Adresa i broj *';if(addressField)addressField.classList.toggle('hidden',parcel);if(parcelNote)parcelNote.classList.toggle('hidden',!parcel)}
- deliveryRadios.forEach(r=>r.addEventListener('change',syncDelivery));syncDelivery();
+ const address=form.querySelector('[name="Adresa"]'),addressLabel=document.querySelector('[data-address-label]'),addressField=document.querySelector('[data-address-field]'),city=form.querySelector('[name="Mesto"]'),deliveryRadios=form.querySelectorAll('[name="Nacin isporuke"]'),parcelNote=document.querySelector('[data-parcel-note]');
+ const localDeliveryNotice=document.createElement('div');
+ localDeliveryNotice.className='notice hidden';
+ localDeliveryNotice.dataset.localDeliveryNotice='';
+ localDeliveryNotice.innerHTML='<b>Moguća besplatna lokalna dostava:</b> Za pojedine adrese u užem centru Novog Sada Adriatic Trade može naknadno odobriti besplatnu lokalnu dostavu. Ako bude odobrena, obavestićemo vas i umanjiti ukupan iznos porudžbine.';
+ city?.closest('.form-row')?.insertAdjacentElement('afterend',localDeliveryNotice);
+ const normalizedCity=()=>String(city?.value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().replace(/\s+/g,' ').toLowerCase();
+ function syncLocalDeliveryNotice(){
+  const method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu';
+  localDeliveryNotice.classList.toggle('hidden',method!=='Dostava na adresu'||normalizedCity()!=='novi sad');
+ }
+ function syncDelivery(){const method=form.querySelector('[name="Nacin isporuke"]:checked')?.value||'Dostava na adresu',parcel=method==='Paketomat';if(address){address.required=!parcel;address.placeholder='Ulica i broj';if(parcel)address.value=''}if(addressLabel)addressLabel.textContent='Adresa i broj *';if(addressField)addressField.classList.toggle('hidden',parcel);if(parcelNote)parcelNote.classList.toggle('hidden',!parcel);syncLocalDeliveryNotice()}
+ deliveryRadios.forEach(r=>r.addEventListener('change',syncDelivery));city?.addEventListener('input',syncLocalDeliveryNotice);city?.addEventListener('change',syncLocalDeliveryNotice);syncDelivery();
  const button=form.querySelector('[data-order-submit]')||form.querySelector('[type="submit"]'),hint=document.querySelector('[data-checkout-hint]'),status=document.querySelector('[data-order-status]');
  button.textContent='Naruči uz obavezu plaćanja - pouzećem';if(hint)hint.textContent=`Klikom na dugme potvrđujete porudžbinu i obavezu plaćanja ukupnog iznosa ${fmt(total)}. Dostava je ${free?'besplatna':fmt(shipping)}.`;
  form.addEventListener('submit',async e=>{

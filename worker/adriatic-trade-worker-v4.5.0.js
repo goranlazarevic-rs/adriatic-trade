@@ -108,7 +108,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.5.0",
+        version: "4.5.1",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -406,13 +406,33 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
   const action = match[2] || "";
   const order = await getOrderById(env.DB, orderId);
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
+
+  if (request.method === "POST" && action === "local-delivery") {
+    if (order.status !== "new") {
+      return json({ ok: false, error: "Besplatna lokalna dostava može se odobriti samo pre potvrde porudžbine." }, 409, origin);
+    }
+    if (order.delivery.method !== "Dostava na adresu" || normalizePlace(order.delivery.city) !== "novi sad") {
+      return json({ ok: false, error: "Lokalna dostava može se odobriti samo za dostavu na adresu u Novom Sadu." }, 409, origin);
+    }
+    if (order.shipping === 0) {
+      return json({ ok: false, error: "Dostava je već besplatna." }, 409, origin);
+    }
+    const now = new Date().toISOString();
+    const result = await env.DB.prepare("UPDATE orders SET shipping = 0, total = goods_total, updated_at = ? WHERE id = ? AND status = 'new' AND shipping > 0")
+      .bind(now, order.id).run();
+    if (!Number(result.meta?.changes || 0)) {
+      return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
+    }
+    await addOrderEvent(env.DB, order.id, "local_delivery_approved", "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu.");
+    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+  }
 
   if (request.method === "POST" && action === "operations") {
     if (['rejected','cancelled'].includes(order.status)) {
@@ -1405,6 +1425,13 @@ function makeOrderId(submissionId) {
 
 function clean(value, max = 200) {
   return String(value ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function normalizePlace(value) {
+  return clean(value, 80)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 function isEmail(value) {
