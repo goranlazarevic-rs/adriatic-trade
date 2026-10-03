@@ -8,7 +8,7 @@ Stabilna v3.14.0 prodajna i analytics osnova, nadograđena premium homepage stor
 - korpa, količine `− / +`, Smart Cart i checkout
 - dostava 420 RSD / besplatna od 3.500 RSD
 - plaćanje pouzećem
-- Cloudflare Worker v4.5.1 + D1 + R2
+- Cloudflare Worker v4.6.0 + D1 + R2
 - GA4 `G-WX8JF1GHRT`, consent i ecommerce tracking
 
 ## v3.15.0 Premium Brand Story
@@ -32,4 +32,4 @@ Stabilna v3.14.0 prodajna i analytics osnova, nadograđena premium homepage stor
 ## Važno
 - Product kartice i kupovne reference koriste aktuelne SKU fotografije za tržište Srbije.
 - Storytelling fotografije služe za poreklo, proces i brend atmosferu.
-- Worker v4.5.1 podržava ručno odobravanje besplatne lokalne dostave za Novi Sad pre potvrde porudžbine.
+- Worker v4.6.0 podržava ručno odobravanje besplatne lokalne dostave za Novi Sad, izbor IPS/gotovina i NBS IPS QR u emailu potvrde.
