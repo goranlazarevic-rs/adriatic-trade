@@ -1,20 +1,52 @@
-name: Deploy Adriatic Trade Worker
-# Production deployment for Worker v4.7.0
+name: Adriatic Trade Release Gate
+# Validation runs before every production deployment.
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "worker/adriatic-trade-worker-v4.5.0.js"
+      - "assets/js/admin.js"
+      - ".github/workflows/deploy-worker.yml"
   push:
     branches: [main]
     paths:
       - "worker/adriatic-trade-worker-v4.5.0.js"
-      - ".github/workflows/deploy-worker.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  deploy:
+  validate:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check worker/adriatic-trade-worker-v4.5.0.js
+          node --check assets/js/admin.js
+
+      - name: Validate release version and required bindings
+        run: |
+          WORKER_VERSION=$(sed -n 's/.*version: "\([0-9.]*\)".*/\1/p' worker/adriatic-trade-worker-v4.5.0.js | head -n 1)
+          DEPLOY_VERSION=$(sed -n 's/^[[:space:]]*- name: Deploy Worker v\([0-9.]*\)$/\1/p' .github/workflows/deploy-worker.yml | head -n 1)
+          HEALTH_VERSION=$(grep 'jq -e.*\.version ==' .github/workflows/deploy-worker.yml | sed -n 's/.*\.version == "\([0-9.]*\)".*/\1/p' | head -n 1)
+          test -n "$WORKER_VERSION"
+          test "$WORKER_VERSION" = "$DEPLOY_VERSION"
+          test "$WORKER_VERSION" = "$HEALTH_VERSION"
+          grep -q 'binding: "DB"' .github/workflows/deploy-worker.yml
+          grep -q 'binding: "RECEIPTS"' .github/workflows/deploy-worker.yml
+          grep -q 'TURNSTILE_SITE_KEY' .github/workflows/deploy-worker.yml
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    concurrency:
+      group: adriatic-trade-production
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
