@@ -52,3 +52,38 @@ const ui=vm.createContext({opsLabels:{unpaid:'Nenaplaćena'},esc:v=>String(v??''
 for(const status of ['rejected','cancelled']){const html=ui.operationsForm({status,operations:{internalNote:'<script>test</script>',paymentStatus:'unpaid'}});assert.match(html,/zaključana/);assert.doesNotMatch(html,/<(?:input|select|textarea|button|form)\b/);assert.doesNotMatch(html,/<script>/);assert.match(html,/Obustavljena/);}
 assert.match(ui.operationsForm({status:'confirmed',operations:{}}),/data-operations/);
 console.log('PASS: rejected/cancelled read-only UI; active order form preserved.');
+
+// Courier exports: readiness, immutable snapshots, retry, concurrent requests and global counts.
+sqlite.exec("UPDATE orders SET status='confirmed', shipped_at=NULL WHERE id='AT-TEST'");
+sqlite.prepare('UPDATE order_operations SET data_json=? WHERE order_id=?').run(JSON.stringify({fulfillment:'ready',paymentStatus:'unpaid'}),'AT-TEST');
+const exportCall=async id=>ctx.runAdmin(new Request('https://test/admin/courier-exports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:id})}));
+const uuid1='11111111-1111-4111-8111-111111111111',uuid2='22222222-2222-4222-8222-222222222222';
+let exp=await (await exportCall(uuid1)).json();assert.equal(exp.batch.order_count,1);
+assert.equal((await get()).status,'confirmed');
+assert.equal((await (await exportCall(uuid1)).json()).batch.order_count,1);
+assert.equal((await (await exportCall(uuid2)).json()).batch.order_count,0);
+const csv1=await (await ctx.runAdmin(new Request('https://test/admin/courier-exports/EXP-'+uuid1))).text();
+sqlite.exec("UPDATE orders SET total=9999,customer_first_name='Changed' WHERE id='AT-TEST'");
+const csv2=await (await ctx.runAdmin(new Request('https://test/admin/courier-exports/EXP-'+uuid1))).text();assert.equal(csv1,csv2);assert.match(csv1,/1020/);assert.doesNotMatch(csv2,/Changed/);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM courier_export_access').get().n,2);
+for(let i=0;i<105;i++){sqlite.prepare("INSERT INTO orders SELECT 'READY-'||?, 'submission-'||?,created_at,updated_at,'confirmed',customer_first_name,customer_last_name,customer_email,customer_phone,delivery_method,address,postal_code,city,note,payment,items_json,goods_total,shipping,total,business_email_sent,customer_email_sent,NULL,NULL,NULL,NULL,NULL,NULL,NULL FROM orders WHERE id='AT-TEST'").run(String(i),String(i));sqlite.prepare('INSERT INTO order_operations(order_id,data_json) VALUES (?,?)').run('READY-'+i,JSON.stringify({fulfillment:'ready'}));}
+const counts=await (await ctx.runAdmin(new Request('https://test/admin/attention'))).json();assert.equal(counts.counts.exportReady,105);
+const ids=['33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444'];
+// SQLite harness shares one connection, so serialize D1 batches as D1 does for transactions.
+let serial=Promise.resolve();const transaction=db.batch;db.batch=statements=>{const run=serial.then(()=>transaction(statements));serial=run.catch(()=>{});return run;};
+const concurrent=await Promise.all(ids.map(async id=>(await (await exportCall(id)).json()).batch.order_count));assert.equal(concurrent.reduce((a,b)=>a+b),105);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM courier_export_orders').get().n,106);
+const finalCounts=await (await ctx.runAdmin(new Request('https://test/admin/attention'))).json();assert.equal(finalCounts.counts.exportReady,0);
+console.log('PASS: export retry, concurrent deduplication, immutable CSV, no shipment transition, download audit, >100 global counts.');
+
+for(const path of ['/admin/attention','/admin/courier-exports','/admin/courier-exports/EXP-'+uuid1])assert.equal((await ctx.runFetch(new Request('https://test'+path,{headers:{Origin:'https://adriatictrade.rs'}}))).status,401);
+assert.equal((await exportCall('invalid')).status,400);
+for(const [i,status,fulfillment] of [[0,'new','ready'],[1,'confirmed','pending'],[2,'rejected','ready'],[3,'cancelled','ready']]){
+ sqlite.prepare("INSERT INTO orders SELECT ?, ?,created_at,updated_at,?,customer_first_name,customer_last_name,customer_email,customer_phone,delivery_method,address,postal_code,city,note,payment,items_json,goods_total,shipping,total,business_email_sent,customer_email_sent,NULL,NULL,NULL,NULL,NULL,NULL,NULL FROM orders WHERE id='AT-TEST'").run('EXCLUDE-'+i,'exclude-'+i,status);
+ sqlite.prepare('INSERT INTO order_operations(order_id,data_json) VALUES (?,?)').run('EXCLUDE-'+i,JSON.stringify({fulfillment}));
+}
+assert.equal((await (await exportCall('55555555-5555-4555-8555-555555555555')).json()).batch.order_count,0);
+const overview=(await (await ctx.runAdmin(new Request('https://test/admin/attention'))).json()).counts;
+assert.equal(overview.newOrders,1);assert.equal(overview.prepare,1);assert.equal(overview.exportReady,0);
+for(const [key,expected] of [['new',1],['prepare',1],['export',0]])assert.equal((await (await ctx.runAdmin(new Request('https://test/admin/orders?attention='+key))).json()).orders.length,expected);
+console.log('PASS: authenticated export endpoints, ineligible status exclusions and action filters.');

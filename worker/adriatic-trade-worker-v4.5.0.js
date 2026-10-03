@@ -327,6 +327,51 @@ async function handleAdmin(request, env, url, origin) {
     attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, payload_json TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   )`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS courier_export_batches (
+    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, finalized INTEGER NOT NULL DEFAULT 0
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS courier_export_orders (
+    order_id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, snapshot_json TEXT NOT NULL
+  )`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS courier_export_access(id INTEGER PRIMARY KEY AUTOINCREMENT,batch_id TEXT NOT NULL,created_at TEXT NOT NULL,actor TEXT NOT NULL)').run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_courier_export_batch ON courier_export_orders(batch_id)').run();
+  const exportReady="orders.status='confirmed' AND json_extract(order_operations.data_json,'$.fulfillment')='ready' AND NOT EXISTS(SELECT 1 FROM courier_export_orders WHERE order_id=orders.id)";
+  if(request.method==='GET' && url.pathname==='/admin/attention') {
+    const result=await env.DB.prepare(`SELECT
+      COALESCE(SUM(orders.status='new'),0) AS newOrders,
+      COALESCE(SUM(orders.status='confirmed' AND COALESCE(json_extract(order_operations.data_json,'$.fulfillment'),'pending')='pending'),0) AS prepare,
+      COALESCE(SUM(${exportReady}),0) AS exportReady,
+      COALESCE(SUM(orders.status='shipped' AND COALESCE(json_extract(order_operations.data_json,'$.paymentStatus'),'unpaid')='unpaid'),0) AS unpaid
+      FROM orders LEFT JOIN order_operations ON order_operations.order_id=orders.id`).first();
+    return json({ok:true,counts:result},200,origin);
+  }
+  if(request.method==='GET' && url.pathname==='/admin/courier-exports') {
+    const rows=await env.DB.prepare(`SELECT b.id,b.created_at,COUNT(e.order_id) AS order_count FROM courier_export_batches b JOIN courier_export_orders e ON e.batch_id=b.id WHERE b.finalized=1 GROUP BY b.id ORDER BY b.created_at DESC LIMIT 50`).all();
+    return json({ok:true,batches:rows.results||[]},200,origin);
+  }
+  const exportMatch=url.pathname.match(/^\/admin\/courier-exports\/(EXP-[a-f0-9-]{36})$/);
+  if(request.method==='GET' && exportMatch) {
+    const batch=await env.DB.prepare('SELECT * FROM courier_export_batches WHERE id=? AND finalized=1').bind(exportMatch[1]).first();
+    if(!batch)return json({ok:false,error:'Izvozni paket nije pronađen.'},404,origin);
+    const rows=await env.DB.prepare('SELECT snapshot_json FROM courier_export_orders WHERE batch_id=? ORDER BY order_id').bind(batch.id).all();
+    await env.DB.prepare('INSERT INTO courier_export_access(batch_id,created_at,actor) VALUES (?,?,?)').bind(batch.id,new Date().toISOString(),'Administrator').run();
+    return new Response(courierCsv((rows.results||[]).map(x=>rowToOrder(JSON.parse(x.snapshot_json))),batch),{headers:{...corsHeaders(origin),'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="${batch.id}.csv"`}});
+  }
+  if(request.method==='POST' && url.pathname==='/admin/courier-exports') {
+    let body;try{body=await request.json()}catch{return json({ok:false,error:'Neispravan zahtev.'},400,origin)}
+    if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(body.requestId||''))return json({ok:false,error:'Neispravan ID izvoza.'},400,origin);
+    const id='EXP-'+body.requestId,now=new Date().toISOString();
+    const columns=['id','created_at','status','customer_first_name','customer_last_name','customer_email','customer_phone','delivery_method','address','postal_code','city','payment','items_json','goods_total','shipping','total','courier','tracking_number'];
+    const snapshot="json_object("+columns.map(k=>"'"+k+"',orders."+k).join(',')+",'operations_json',order_operations.data_json)";
+    await env.DB.batch([
+      env.DB.prepare('INSERT OR IGNORE INTO courier_export_batches(id,created_at) VALUES (?,?)').bind(id,now),
+      env.DB.prepare(`INSERT OR IGNORE INTO courier_export_orders(order_id,batch_id,snapshot_json) SELECT orders.id,?,${snapshot} FROM orders JOIN order_operations ON order_operations.order_id=orders.id WHERE ${exportReady} AND EXISTS(SELECT 1 FROM courier_export_batches WHERE id=? AND finalized=0)`).bind(id,id),
+      env.DB.prepare(`INSERT INTO order_events(order_id,event_type,note,created_at) SELECT order_id,'courier_export',?,? FROM courier_export_orders WHERE batch_id=? AND EXISTS(SELECT 1 FROM courier_export_batches WHERE id=? AND finalized=0)`).bind('Administrator · Izvoz za kurira '+id,now,id,id),
+      env.DB.prepare('UPDATE courier_export_batches SET finalized=1 WHERE id=?').bind(id)
+    ]);
+    const batch=await env.DB.prepare('SELECT b.id,b.created_at,COUNT(e.order_id) AS order_count FROM courier_export_batches b LEFT JOIN courier_export_orders e ON e.batch_id=b.id WHERE b.id=? GROUP BY b.id').bind(id).first();
+    return json({ok:true,batch},200,origin);
+  }
   if ((request.method === "POST") && /\/(confirm|ship|reject|cancel)$/.test(url.pathname) && !env.RESEND_API_KEY) {
     return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
   }
@@ -352,6 +397,9 @@ async function handleAdmin(request, env, url, origin) {
       const date=url.searchParams.get(key);
       if(date && /^\d{4}-\d{2}-\d{2}$/.test(date)) { conditions.push(`substr(created_at,1,10) ${op} ?`); params.push(date); }
     }
+    const attention=url.searchParams.get('attention');
+    const actions={new:"orders.status='new'",prepare:"orders.status='confirmed' AND COALESCE(json_extract((SELECT data_json FROM order_operations WHERE order_id=orders.id),'$.fulfillment'),'pending')='pending'",export:"orders.status='confirmed' AND json_extract((SELECT data_json FROM order_operations WHERE order_id=orders.id),'$.fulfillment')='ready' AND NOT EXISTS(SELECT 1 FROM courier_export_orders WHERE order_id=orders.id)",unpaid:"orders.status='shipped' AND COALESCE(json_extract((SELECT data_json FROM order_operations WHERE order_id=orders.id),'$.paymentStatus'),'unpaid')='unpaid'"};
+    if(actions[attention])conditions.push(actions[attention]);
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const stmt = env.DB.prepare(`SELECT orders.*, (SELECT data_json FROM order_operations WHERE order_id=orders.id) AS operations_json, EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='security_flag') AS security_flagged FROM orders ${where} ORDER BY created_at DESC LIMIT ?`).bind(...params, limit);
     const result = await stmt.all();
@@ -1403,3 +1451,10 @@ function json(data, status = 200, origin = "", extraHeaders = {}) {
   return new Response(JSON.stringify(data), { status, headers });
 }
 
+
+function courierCsv(orders,batch) {
+  const header=['Izvozni paket','Datum izvoza','Porudžbina','Ime','Prezime','Telefon','Email','Adresa','Poštanski broj','Mesto','Način isporuke','Roba RSD','Dostava RSD','Ukupno RSD','Pouzeće RSD'];
+  const cell=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
+  const rows=orders.map(o=>[batch.id,batch.created_at,o.id,o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.delivery.method,o.goodsTotal,o.shipping,o.total,['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total]);
+  return '\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n');
+}

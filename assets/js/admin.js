@@ -18,6 +18,8 @@
   let orders=[];
   let selectedId='';
   let timer=null;
+  let attention='';
+  let pendingExport=sessionStorage.getItem('at_pending_export')||'';
 
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const money=v=>new Intl.NumberFormat('sr-RS',{maximumFractionDigits:0}).format(Number(v||0))+' RSD';
@@ -51,6 +53,7 @@
     if(filter.value)params.set('status',filter.value);
     if(search.value.trim())params.set('q',search.value.trim());
     params.set('limit','100');
+    if(attention)params.set('attention',attention);
     for(const key of ['from','to']) {const v=document.querySelector('[data-date-'+key+']').value;if(v)params.set(key,v);}
     list.innerHTML='<div class="admin-empty">Učitavanje...</div>';
     try{
@@ -61,6 +64,7 @@
       const active=orders.filter(o=>!['rejected','cancelled'].includes(o.status));
       document.querySelector('[data-sales-summary]').textContent='Prikazane porudžbine: '+orders.length+' · Aktivne: '+active.length+' · Vrednost robe: '+money(active.reduce((n,o)=>n+o.goodsTotal,0))+' · Naplaćeno (sa dostavom): '+money(orders.filter(o=>o.operations.paymentStatus==='paid').reduce((n,o)=>n+o.total,0));
       renderList();
+      await loadOperationsOverview();
       if(selectedId&&!orders.some(o=>o.id===selectedId)){selectedId='';detail.innerHTML='<div class="admin-empty admin-empty-large">Izaberite porudžbinu sa leve strane.</div>'}
       if(selectFirst&&orders[0])await openOrder(orders[0].id);
     }catch(err){if(token)list.innerHTML=`<div class="admin-empty">${esc(err.message)}</div>`}
@@ -129,7 +133,7 @@
 
   function row(label,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
   function rowLink(label,href,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong><a class="admin-link" href="${esc(href)}">${esc(value)}</a></strong></div>`}
-  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal'}[v]||v)}
+  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira'}[v]||v)}
 
   function lastDecisionNote(o,type){
     const ev=[...(o.events||[])].reverse().find(e=>e.event_type===type);
@@ -253,6 +257,32 @@
   }
   document.querySelector('[data-export]').addEventListener('click',exportOrders);
   for(const selector of ['[data-date-from]','[data-date-to]','[data-ops-filter]'])document.querySelector(selector).addEventListener('change',()=>loadOrders());
+
+
+  async function loadOperationsOverview(){
+    const [a,b]=await Promise.all([api('/admin/attention'),api('/admin/courier-exports')]);
+    const cards=[['new','Nove',a.counts.newOrders],['prepare','Za pripremu',a.counts.prepare],['export','Spremne za izvoz',a.counts.exportReady],['unpaid','Neuplaćene otkupnine',a.counts.unpaid]];
+    document.querySelector('[data-attention-cards]').innerHTML=cards.map(([key,label,n])=>`<button class="btn ${attention===key?'btn-primary':'btn-secondary'}" type="button" data-attention="${key}">${label}: ${n}</button>`).join('')+'<button class="btn btn-secondary" type="button" data-attention="">Sve</button>';
+    document.querySelectorAll('[data-attention]').forEach(btn=>btn.addEventListener('click',()=>{attention=btn.dataset.attention;filter.value='';search.value='';document.querySelector('[data-ops-filter]').value='';for(const key of ['from','to'])document.querySelector('[data-date-'+key+']').value='';loadOrders();}));
+    document.querySelector('[data-export-batches]').innerHTML=(b.batches||[]).map(batch=>`<div class="admin-info-row"><span>${esc(dt(batch.created_at))} · ${batch.order_count} porudžbina<br>${esc(batch.id)}</span><button class="btn btn-secondary" type="button" data-batch="${esc(batch.id)}">Ponovo preuzmi</button></div>`).join('')||'<p>Nema prethodnih izvoza.</p>';
+    document.querySelectorAll('[data-batch]').forEach(btn=>btn.addEventListener('click',()=>downloadBatch(btn.dataset.batch).catch(err=>notify(err.message))));
+  }
+  async function downloadBatch(id){
+    const res=await fetch(API+'/admin/courier-exports/'+encodeURIComponent(id),{headers:{Authorization:'Bearer '+token},credentials:'omit'});
+    if(!res.ok)throw new Error('Izvozni paket nije moguće preuzeti.');
+    const url=URL.createObjectURL(await res.blob());const a=document.createElement('a');a.href=url;a.download=id+'.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  document.querySelector('[data-courier-export]').addEventListener('click',async e=>{
+    if(!confirm('Kreirati izvozni paket svih spremnih, neizvezenih porudžbina? Status slanja ostaje nepromenjen.'))return;
+    const btn=e.currentTarget;btn.disabled=true;
+    if(!pendingExport){pendingExport=crypto.randomUUID();sessionStorage.setItem('at_pending_export',pendingExport);}
+    try{
+      const data=await api('/admin/courier-exports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:pendingExport})});
+      pendingExport='';sessionStorage.removeItem('at_pending_export');
+      if(data.batch.order_count){await downloadBatch(data.batch.id);notify('Izvozni paket je sačuvan. Ako preuzimanje nije uspelo, koristite „Ponovo preuzmi“.','success');}else notify('Nema spremnih neizvezenih porudžbina.');
+      await loadOrders();
+    }catch(err){notify(err.message+' Sačuvani paket možete ponovo preuzeti iz istorije.');await loadOperationsOverview().catch(()=>{});}finally{btn.disabled=false;}
+  });
 
   loginForm.addEventListener('submit',async e=>{e.preventDefault();token=tokenInput.value.trim();if(!token)return;sessionStorage.setItem(KEY,token);showApp();await loadOrders(true)});
   logout.addEventListener('click',()=>{sessionStorage.removeItem(KEY);token='';selectedId='';tokenInput.value='';showLogin()});

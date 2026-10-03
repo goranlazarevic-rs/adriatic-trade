@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <link rel="icon" href="/assets/img/favicon.png">
   <link rel="stylesheet" href="/assets/css/style.css?v=3.8.2">
-  <link rel="stylesheet" href="/assets/css/admin.css?v=1.3.2">
+  <link rel="stylesheet" href="/assets/css/admin.css?v=1.4.0">
 </head>
 <body class="admin-body">
   <header class="admin-header">
@@ -66,6 +66,8 @@
         <button class="btn btn-secondary" type="button" data-admin-refresh>Osveži</button>
       </div>
 
+      <section class="admin-box"><h2>Traži akciju</h2><div class="admin-action-row" data-attention-cards></div><p>Brojači obuhvataju sve porudžbine. Kartica otvara odgovarajuću listu.</p></section>
+      <section class="admin-box"><h2>Izvoz za kurira</h2><p>Samo potvrđene porudžbine označene kao „Spremna za slanje“. Izvoz obuhvata sve neizvezene porudžbine, nezavisno od filtera. Ne menja status u „Poslata“.</p><button class="btn btn-primary" type="button" data-courier-export>Izvezi samo neizvezene</button><h3>Prethodni izvozni paketi</h3><div data-export-batches></div><p>Opšti CSV u traci iznad služi za pregled; ne označava porudžbine kao izvezene. Ovaj CSV je opšti format za dostavu; format za uvoz kod konkretnog kurira usklađuje se naknadno.</p></section>
       <div class="admin-box" data-sales-summary></div>
       <div class="admin-alert hidden" data-admin-alert></div>
 
@@ -87,7 +89,7 @@
     </section>
   </main>
 
-  <script src="/assets/js/admin.js?v=1.3.2"></script>
+  <script src="/assets/js/admin.js?v=1.4.0"></script>
 </body>
 </html>
 
