@@ -113,7 +113,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.6.0",
+        version: "4.7.0",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -411,7 +411,7 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|ips-qr))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
@@ -469,6 +469,97 @@ async function handleAdmin(request, env, url, origin) {
         "Cache-Control": "no-store"
       }
     });
+  }
+
+  if (request.method === "POST" && action === "local-schedule") {
+    if (order.status !== "confirmed" || !isApprovedLocalDelivery(order)) {
+      return json({ ok: false, error: "Termin se može dogovoriti samo za potvrđenu ličnu dostavu." }, 409, origin);
+    }
+    let body; try { body = await request.json(); } catch { return json({ ok: false, error: "Neispravan zahtev." }, 400, origin); }
+    const date = clean(body?.date, 10);
+    const timeWindow = clean(body?.timeWindow, 80);
+    const location = clean(body?.location, 300);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ ok: false, error: "Izaberite datum lične isporuke." }, 400, origin);
+    if (date < belgradeDateKey()) return json({ ok: false, error: "Datum isporuke ne može biti u prošlosti." }, 400, origin);
+    if (!timeWindow) return json({ ok: false, error: "Unesite dogovoreno vreme ili vremenski okvir." }, 400, origin);
+    if (!location) return json({ ok: false, error: "Unesite dogovoreno mesto isporuke." }, 400, origin);
+
+    const sendResult = await sendEmail(env.RESEND_API_KEY, {
+      from: FROM_EMAIL,
+      to: [order.customer.email],
+      reply_to: BUSINESS_EMAIL,
+      subject: `Dogovoren termin lične isporuke — ${order.id}`,
+      html: localScheduleEmailHtml(order, { date, timeWindow, location }),
+      tags: [
+        { name: "category", value: "local_delivery_scheduled" },
+        { name: "order_id", value: order.id }
+      ]
+    }, `local-schedule/${order.id}/${date}/${encodeURIComponent(timeWindow)}`);
+    if (!sendResult.ok) return json({ ok: false, error: "Email kupcu nije poslat. Termin nije sačuvan." }, 502, origin);
+
+    const current = order.operations || {};
+    const now = new Date().toISOString();
+    const next = { ...current, localDelivery: { date, timeWindow, location, notifiedAt: now, deliveredAt: current.localDelivery?.deliveredAt || "" } };
+    await env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=?")
+      .bind(JSON.stringify(next), order.id).run();
+    await addOrderEvent(env.DB, order.id, "local_delivery_scheduled", `Termin lične isporuke: ${date}, ${timeWindow}; mesto: ${location}. Kupac je obavešten.`);
+    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+  }
+
+  if (request.method === "POST" && action === "local-delivered") {
+    if (order.status === "shipped" && order.operations?.fulfillment === "delivered") return json({ ok: true, order, alreadyDone: true }, 200, origin);
+    if (order.status !== "confirmed" || !isApprovedLocalDelivery(order) || !order.operations?.localDelivery?.date) {
+      return json({ ok: false, error: "Prvo potvrdite i zakažite ličnu dostavu." }, 409, origin);
+    }
+    const contentType = request.headers.get("Content-Type") || "";
+    if (!contentType.includes("multipart/form-data")) return json({ ok: false, error: "Očekivan je formular za završetak isporuke." }, 415, origin);
+    let form; try { form = await request.formData(); } catch { return json({ ok: false, error: "Neispravan formular." }, 400, origin); }
+    const paymentConfirmed = form.get("paymentConfirmed") === "yes";
+    if (!paymentConfirmed && order.operations.paymentStatus !== "paid") {
+      return json({ ok: false, error: order.payment === LOCAL_PAYMENT_CASH ? "Potvrdite da je gotovina primljena." : "Prvo proverite uplatu na računu i potvrdite da je evidentirana." }, 409, origin);
+    }
+
+    let attachment = null;
+    let receiptKey = order.receiptKey || "";
+    let receiptFilename = order.receiptFilename || "";
+    const receipt = form.get("receipt");
+    if (receipt && typeof receipt === "object" && typeof receipt.arrayBuffer === "function" && receipt.size > 0) {
+      if (receipt.size > 5 * 1024 * 1024) return json({ ok: false, error: "PDF fiskalnog računa može imati najviše 5 MB." }, 413, origin);
+      const filename = safePdfFilename(receipt.name || `fiskalni-racun-${order.id}.pdf`);
+      if (!filename.toLowerCase().endsWith(".pdf") || (receipt.type && receipt.type !== "application/pdf")) return json({ ok: false, error: "Fiskalni račun mora biti PDF dokument." }, 400, origin);
+      const buffer = await receipt.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) return json({ ok: false, error: "Dokument nema ispravan PDF format." }, 400, origin);
+      if (!env.RECEIPTS) return json({ ok: false, error: "R2 skladište za fiskalne račune nije povezano." }, 503, origin);
+      receiptFilename = filename;
+      receiptKey = `fiscal/${order.id}/${Date.now()}-${filename}`;
+      await env.RECEIPTS.put(receiptKey, buffer, { httpMetadata: { contentType: "application/pdf", contentDisposition: `attachment; filename="${sanitizeHeaderFilename(filename)}"` }, customMetadata: { orderId: order.id } });
+      attachment = { filename, content: arrayBufferToBase64(buffer) };
+    }
+
+    const payload = {
+      from: FROM_EMAIL,
+      to: [order.customer.email],
+      reply_to: BUSINESS_EMAIL,
+      subject: `Porudžbina ${order.id} je lično isporučena`,
+      html: localDeliveredEmailHtml(order, Boolean(attachment || receiptKey)),
+      tags: [{ name: "category", value: "local_delivery_delivered" }, { name: "order_id", value: order.id }]
+    };
+    if (attachment) payload.attachments = [attachment];
+    const sendResult = await sendEmail(env.RESEND_API_KEY, payload, `local-delivered/${order.id}`);
+    if (!sendResult.ok) {
+      if (attachment && env.RECEIPTS) await env.RECEIPTS.delete(receiptKey).catch(() => {});
+      return json({ ok: false, error: "Email kupcu nije poslat. Status nije promenjen." }, 502, origin);
+    }
+
+    const now = new Date().toISOString();
+    const next = { ...order.operations, fulfillment: "delivered", paymentStatus: "paid", localDelivery: { ...order.operations.localDelivery, deliveredAt: now } };
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed'`).bind(now, now, receiptKey || null, receiptFilename || null, order.id),
+      env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=?").bind(JSON.stringify(next), order.id)
+    ]);
+    await addOrderEvent(env.DB, order.id, "local_delivery_delivered", "Lična dostava je završena, a naplata evidentirana. Kupac je obavešten.");
+    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
   }
 
   if (request.method === "POST" && action === "operations") {
@@ -906,6 +997,38 @@ function statusShippedEmailHtml(order, shipment) {
     ${customerDeliveryBlock(order)}
     ${receiptText}
     <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za pitanja u vezi sa porudžbinom odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+  `);
+}
+
+function formatLocalDeliveryDate(value) {
+  try {
+    return new Intl.DateTimeFormat("sr-RS", { timeZone: "Europe/Belgrade", weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${value}T12:00:00+02:00`));
+  } catch { return value; }
+}
+
+function localScheduleEmailHtml(order, schedule) {
+  return emailShell(`
+    <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#b69a69;font-weight:700;">Lična isporuka</div>
+    <h1 style="font-size:25px;line-height:1.22;margin:8px 0 10px;color:#10283d;">Termin isporuke je dogovoren.</h1>
+    <p style="margin:0 0 20px;color:#4f5c65;font-size:15px;line-height:1.65;">Zdravo, ${escapeHtml(order.customer.firstName)}. Za porudžbinu <strong>${escapeHtml(order.id)}</strong> evidentirali smo sledeći dogovor:</p>
+    <div style="padding:18px 20px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.75;">
+      <strong style="color:#10283d;">Datum:</strong> ${escapeHtml(formatLocalDeliveryDate(schedule.date))}<br>
+      <strong style="color:#10283d;">Vreme:</strong> ${escapeHtml(schedule.timeWindow)}<br>
+      <strong style="color:#10283d;">Mesto:</strong> ${escapeHtml(schedule.location)}<br>
+      <strong style="color:#10283d;">Plaćanje:</strong> ${escapeHtml(order.payment)}
+    </div>
+    <p style="margin:20px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Ako je potrebna promena, odgovorite na ovaj email ili pozovite broj naveden u kontaktima prodavca.</p>
+  `);
+}
+
+function localDeliveredEmailHtml(order, hasReceipt) {
+  return emailShell(`
+    <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#5b8f3e;font-weight:700;">Lično isporučeno</div>
+    <h1 style="font-size:25px;line-height:1.22;margin:8px 0 10px;color:#10283d;">Porudžbina je uspešno isporučena.</h1>
+    <p style="margin:0 0 20px;color:#4f5c65;font-size:15px;line-height:1.65;">Hvala, ${escapeHtml(order.customer.firstName)}. Evidentirali smo da je porudžbina <strong>${escapeHtml(order.id)}</strong> lično preuzeta i plaćena.</p>
+    ${summaryTable(customerOrderRows(order), order)}
+    ${hasReceipt ? `<p style="margin:18px 0 0;color:#4f5c65;font-size:13px;line-height:1.6;"><strong>Fiskalni račun je u prilogu ovog emaila.</strong></p>` : ""}
+    <p style="margin:20px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za pitanja odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
   `);
 }
 

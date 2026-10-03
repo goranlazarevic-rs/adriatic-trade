@@ -1,5 +1,5 @@
 name: Deploy Adriatic Trade Worker
-# Production deployment for Worker v4.6.0
+# Production deployment for Worker v4.7.0
 
 on:
   push:
@@ -56,7 +56,7 @@ jobs:
               vars: {TURNSTILE_SITE_KEY: "0x4AAAAAAFEPtKXCu1OUJtJ2"}
             }' > wrangler.deploy.json
 
-      - name: Deploy Worker v4.6.0
+      - name: Deploy Worker v4.7.0
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -67,9 +67,9 @@ jobs:
           for ATTEMPT in 1 2 3 4 5 6; do
             RESPONSE=$(curl --fail-with-body --silent --show-error \
               -H 'Cache-Control: no-cache' \
-              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.6.0-$ATTEMPT")
+              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.7.0-$ATTEMPT")
             printf '%s\n' "$RESPONSE"
-            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.6.0" and .database == true and .receipts == true and .security == true'; then
+            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.7.0" and .database == true and .receipts == true and .security == true'; then
               exit 0
             fi
             sleep 5

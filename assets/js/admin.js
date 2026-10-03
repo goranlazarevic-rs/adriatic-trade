@@ -100,15 +100,25 @@
       <div class="admin-action-row admin-action-row-secondary"><button class="btn ${ipsPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="ips" ${ipsPayment?'disabled':''}>IPS na račun${ipsPayment?' ✓':''}</button><button class="btn ${cashPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="cash" ${cashPayment?'disabled':''}>Gotovina${cashPayment?' ✓':''}</button></div>
       ${ipsPayment?`<div class="admin-box" style="margin-top:14px"><h3>IPS QR za kupca</h3><p>Kupac dobija ovu PNG sliku uz email potvrde. Može da je skenira ili uveze iz galerije u bankarsku aplikaciju.</p><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><img data-ips-qr alt="NBS IPS QR za porudžbinu ${esc(o.id)}" style="width:220px;max-width:100%;background:#fff;border:1px solid #ddd;border-radius:10px;padding:8px"><button class="btn btn-secondary" type="button" data-download-ips>Preuzmi IPS QR</button></div></div>`:''}`:'';
     if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email sa konačnim iznosom.</p>${localDeliveryEligible?`<div class="notice"><b>Adresa je u Novom Sadu.</b> Ako je adresa u užem centru i dostavljate lično, prvo odobrite besplatnu lokalnu dostavu. Ukupan iznos biće umanjen za ${esc(money(o.shipping))}.</div><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-secondary" type="button" data-local-delivery>Odobri besplatnu lokalnu dostavu</button></div>`:localPaymentPanel}<div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
-    if(o.status==='confirmed')actions=`<div class="admin-actions"><h3>Predaja kuriru</h3><p>Unesite podatke pošiljke. Fiskalni račun može biti dodat kao PDF i biće poslat kupcu u prilogu.</p><form class="admin-ship-form" data-ship-form>
+    if(o.status==='confirmed'&&localApproved){const s=o.operations?.localDelivery||{};actions=`<div class="admin-actions"><h3>Dogovor lične isporuke</h3><p>Posle telefonskog/Viber dogovora unesite termin i mesto. Kupac odmah dobija email sa potvrdom dogovora.</p><form class="admin-ship-form" data-local-schedule-form>
+      <div class="field"><label>Datum *</label><input name="date" type="date" value="${esc(s.date||'')}" required></div>
+      <div class="field"><label>Vreme ili vremenski okvir *</label><input name="timeWindow" maxlength="80" value="${esc(s.timeWindow||'')}" placeholder="npr. 17:00–19:00" required></div>
+      <div class="field wide"><label>Dogovoreno mesto *</label><textarea name="location" maxlength="300" rows="3" placeholder="Tačna adresa ili prepoznatljivo mesto sastanka" required>${esc(s.location||o.delivery.address)}</textarea></div>
+      <div class="wide"><button class="btn btn-primary" type="submit">${s.notifiedAt?'Izmeni termin i ponovo obavesti kupca':'Potvrdi termin i obavesti kupca'}</button></div>
+    </form>${s.notifiedAt?`<div class="notice" style="margin-top:16px"><b>Dogovor je poslat kupcu:</b> ${esc(s.date)} · ${esc(s.timeWindow)} · ${esc(s.location)}</div><form class="admin-ship-form" data-local-delivered-form>
+      <div class="field wide"><label>Fiskalni račun (PDF)</label><input name="receipt" type="file" accept="application/pdf,.pdf"><div class="admin-file-note">PDF do 5 MB. Ako je već povezan u evidenciji, nije potrebno ponovo ga dodavati.</div></div>
+      <label class="checkbox wide"><input type="checkbox" name="paymentConfirmed" value="yes" ${o.operations?.paymentStatus==='paid'?'checked disabled':''} required><span>${cashPayment?'Potvrđujem da je gotovina primljena.':'Proverio/la sam račun firme i uplata je evidentirana.'}</span></label>
+      <div class="wide"><button class="btn btn-primary" type="submit">Označi kao lično isporučeno</button></div>
+    </form>`:''}<div class="admin-action-row admin-action-row-secondary"><button class="btn btn-danger-outline" type="button" data-cancel>Otkaži porudžbinu</button></div></div>`}
+    if(o.status==='confirmed'&&!localApproved)actions=`<div class="admin-actions"><h3>Predaja kuriru</h3><p>Unesite podatke pošiljke. Fiskalni račun može biti dodat kao PDF i biće poslat kupcu u prilogu.</p><form class="admin-ship-form" data-ship-form>
       <div class="field"><label>Kurirska služba *</label><input name="courier" placeholder="npr. D Express" required></div>
       <div class="field"><label>Broj pošiljke *</label><input name="trackingNumber" required></div>
       <div class="field wide"><label>Link za praćenje</label><input name="trackingUrl" type="url" placeholder="https://..."></div>
       <div class="field wide"><label>Fiskalni račun (PDF)</label><input name="receipt" type="file" accept="application/pdf,.pdf"><div class="admin-file-note">PDF do 5 MB. Panel ne generiše fiskalni račun; šalje dokument iz vašeg fiskalnog sistema.</div></div>
       <div class="wide"><button class="btn btn-primary" type="submit">Označi kao poslato i obavesti kupca</button></div>
     </form><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-danger-outline" type="button" data-cancel>Otkaži porudžbinu</button></div></div>`;
-    if(o.status==='shipped')actions=`<div class="admin-actions"><h3>Pošiljka je poslata</h3><div class="admin-info">
-      ${row('Kurir',o.courier||'—')}${row('Broj pošiljke',o.trackingNumber||'—')}${o.trackingUrl?rowLink('Praćenje',o.trackingUrl,o.trackingUrl):''}${o.receiptFilename?`<div class="admin-action-row"><button class="btn btn-secondary" type="button" data-receipt>Preuzmi fiskalni račun</button></div>`:''}
+    if(o.status==='shipped')actions=`<div class="admin-actions"><h3>${o.operations?.fulfillment==='delivered'&&o.courier==='Lična dostava'?'Porudžbina je lično isporučena':'Pošiljka je poslata'}</h3><div class="admin-info">
+      ${o.courier==='Lična dostava'?`${row('Način','Lična dostava')}${row('Termin',o.operations?.localDelivery?`${o.operations.localDelivery.date} · ${o.operations.localDelivery.timeWindow}`:'—')}${row('Mesto',o.operations?.localDelivery?.location||'—')}${row('Naplata',opsLabels[o.operations?.paymentStatus]||'—')}`:`${row('Kurir',o.courier||'—')}${row('Broj pošiljke',o.trackingNumber||'—')}${o.trackingUrl?rowLink('Praćenje',o.trackingUrl,o.trackingUrl):''}`}${o.receiptFilename?`<div class="admin-action-row"><button class="btn btn-secondary" type="button" data-receipt>Preuzmi fiskalni račun</button></div>`:''}
     </div></div>`;
     if(o.status==='rejected')actions=`<div class="admin-actions admin-terminal-action"><h3>Porudžbina je odbijena</h3><p>${esc(lastDecisionNote(o,'rejected')||'Kupac je obavešten emailom. Porudžbina ostaje sačuvana u evidenciji.')}</p></div>`;
     if(o.status==='cancelled')actions=`<div class="admin-actions admin-terminal-action"><h3>Porudžbina je otkazana</h3><p>${esc(lastDecisionNote(o,'cancelled')||'Kupac je obavešten emailom. Porudžbina ostaje sačuvana u evidenciji.')}</p></div>`;
@@ -139,12 +149,14 @@
     detail.querySelector('[data-reject]')?.addEventListener('click',()=>openDecisionDialog('reject',o.id));
     detail.querySelector('[data-cancel]')?.addEventListener('click',()=>openDecisionDialog('cancel',o.id));
     detail.querySelector('[data-ship-form]')?.addEventListener('submit',e=>shipOrder(e,o.id));
+    detail.querySelector('[data-local-schedule-form]')?.addEventListener('submit',e=>saveLocalSchedule(e,o.id));
+    detail.querySelector('[data-local-delivered-form]')?.addEventListener('submit',e=>finishLocalDelivery(e,o.id));
     detail.querySelector('[data-receipt]')?.addEventListener('click',()=>downloadReceipt(o.id,o.receiptFilename));
   }
 
   function row(label,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
   function rowLink(label,href,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong><a class="admin-link" href="${esc(href)}">${esc(value)}</a></strong></div>`}
-  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira',local_delivery_approved:'Odobrena lokalna dostava',local_payment_changed:'Promenjen način plaćanja'}[v]||v)}
+  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira',local_delivery_approved:'Odobrena lokalna dostava',local_payment_changed:'Promenjen način plaćanja',local_delivery_scheduled:'Dogovoren termin lične isporuke',local_delivery_delivered:'Lično isporučena'}[v]||v)}
 
   function lastDecisionNote(o,type){
     const ev=[...(o.events||[])].reverse().find(e=>e.event_type===type);
@@ -245,6 +257,33 @@
     const fd=new FormData(form);
     setBusy(detail,true);
     try{const data=await api('/admin/orders/'+encodeURIComponent(id)+'/ship',{method:'POST',body:fd});notify('Kupac je obavešten da je porudžbina poslata.','success');await loadOrders();renderDetail(data.order)}catch(err){notify(err.message)}finally{setBusy(detail,false)}
+  }
+
+  async function saveLocalSchedule(e,id){
+    e.preventDefault();
+    const form=e.currentTarget;
+    const body=Object.fromEntries(new FormData(form));
+    if(!confirm('Sačuvati dogovoreni termin i poslati kupcu email?'))return;
+    setBusy(detail,true);
+    try{
+      const data=await api('/admin/orders/'+encodeURIComponent(id)+'/local-schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      notify('Termin je sačuvan i kupac je obavešten.','success');await loadOrders();renderDetail(data.order);
+    }catch(err){notify(err.message)}finally{setBusy(detail,false)}
+  }
+
+  async function finishLocalDelivery(e,id){
+    e.preventDefault();
+    const form=e.currentTarget;
+    const file=form.elements.receipt?.files?.[0];
+    if(file&&file.size>5*1024*1024){notify('PDF može imati najviše 5 MB.');return}
+    if(!form.elements.paymentConfirmed?.checked){notify('Potvrdite da je uplata ili gotovina evidentirana.');return}
+    if(!confirm('Potvrđujete da je roba predata kupcu i da je naplata evidentirana? Kupac će dobiti završni email.'))return;
+    const fd=new FormData(form);
+    setBusy(detail,true);
+    try{
+      const data=await api('/admin/orders/'+encodeURIComponent(id)+'/local-delivered',{method:'POST',body:fd});
+      notify('Porudžbina je označena kao lično isporučena i naplaćena.','success');await loadOrders();renderDetail(data.order);
+    }catch(err){notify(err.message)}finally{setBusy(detail,false)}
   }
 
   async function downloadReceipt(id,filename){
