@@ -93,7 +93,13 @@
     const address=o.delivery.method==='Dostava na adresu'?`${o.delivery.address}, ${o.delivery.postalCode} ${o.delivery.city}`:`Paketomat · ${o.delivery.postalCode} ${o.delivery.city}`;
     let actions='';
     const localDeliveryEligible=o.status==='new'&&o.delivery.method==='Dostava na adresu'&&String(o.delivery.city||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()==='novi sad'&&o.shipping>0;
-    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email sa konačnim iznosom.</p>${localDeliveryEligible?`<div class="notice"><b>Adresa je u Novom Sadu.</b> Ako je adresa u užem centru i dostavljate lično, prvo odobrite besplatnu lokalnu dostavu. Ukupan iznos biće umanjen za ${esc(money(o.shipping))}.</div><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-secondary" type="button" data-local-delivery>Odobri besplatnu lokalnu dostavu</button></div>`:o.shipping===0&&String(o.delivery.city||'').toLowerCase().includes('novi sad')?'<div class="notice"><b>Besplatna dostava je odobrena.</b> Kupac će konačni iznos videti u emailu potvrde.</div>':''}<div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
+    const localApproved=(o.events||[]).some(e=>e.event_type==='local_delivery_approved');
+    const ipsPayment=o.payment==='Lična dostava — IPS na račun';
+    const cashPayment=o.payment==='Lična dostava — gotovina';
+    const localPaymentPanel=localApproved?`<div class="notice"><b>Besplatna lična dostava je odobrena.</b> Izaberite način plaćanja pre potvrde porudžbine.</div>
+      <div class="admin-action-row admin-action-row-secondary"><button class="btn ${ipsPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="ips" ${ipsPayment?'disabled':''}>IPS na račun${ipsPayment?' ✓':''}</button><button class="btn ${cashPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="cash" ${cashPayment?'disabled':''}>Gotovina${cashPayment?' ✓':''}</button></div>
+      ${ipsPayment?`<div class="admin-box" style="margin-top:14px"><h3>IPS QR za kupca</h3><p>Kupac dobija ovu PNG sliku uz email potvrde. Može da je skenira ili uveze iz galerije u bankarsku aplikaciju.</p><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><img data-ips-qr alt="NBS IPS QR za porudžbinu ${esc(o.id)}" style="width:220px;max-width:100%;background:#fff;border:1px solid #ddd;border-radius:10px;padding:8px"><button class="btn btn-secondary" type="button" data-download-ips>Preuzmi IPS QR</button></div></div>`:''}`:'';
+    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email sa konačnim iznosom.</p>${localDeliveryEligible?`<div class="notice"><b>Adresa je u Novom Sadu.</b> Ako je adresa u užem centru i dostavljate lično, prvo odobrite besplatnu lokalnu dostavu. Ukupan iznos biće umanjen za ${esc(money(o.shipping))}.</div><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-secondary" type="button" data-local-delivery>Odobri besplatnu lokalnu dostavu</button></div>`:localPaymentPanel}<div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
     if(o.status==='confirmed')actions=`<div class="admin-actions"><h3>Predaja kuriru</h3><p>Unesite podatke pošiljke. Fiskalni račun može biti dodat kao PDF i biće poslat kupcu u prilogu.</p><form class="admin-ship-form" data-ship-form>
       <div class="field"><label>Kurirska služba *</label><input name="courier" placeholder="npr. D Express" required></div>
       <div class="field"><label>Broj pošiljke *</label><input name="trackingNumber" required></div>
@@ -127,6 +133,9 @@
     detail.querySelector('[data-print-label]')?.addEventListener('click',()=>printLabel(o));
     detail.querySelector('[data-confirm]')?.addEventListener('click',()=>confirmOrder(o.id));
     detail.querySelector('[data-local-delivery]')?.addEventListener('click',()=>approveLocalDelivery(o.id));
+    detail.querySelectorAll('[data-local-payment]').forEach(btn=>btn.addEventListener('click',()=>setLocalPayment(o.id,btn.dataset.localPayment)));
+    if(detail.querySelector('[data-ips-qr]'))loadIpsQr(o.id);
+    detail.querySelector('[data-download-ips]')?.addEventListener('click',()=>downloadIpsQr(o.id));
     detail.querySelector('[data-reject]')?.addEventListener('click',()=>openDecisionDialog('reject',o.id));
     detail.querySelector('[data-cancel]')?.addEventListener('click',()=>openDecisionDialog('cancel',o.id));
     detail.querySelector('[data-ship-form]')?.addEventListener('submit',e=>shipOrder(e,o.id));
@@ -135,7 +144,7 @@
 
   function row(label,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
   function rowLink(label,href,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong><a class="admin-link" href="${esc(href)}">${esc(value)}</a></strong></div>`}
-  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira',local_delivery_approved:'Odobrena lokalna dostava'}[v]||v)}
+  function eventTitle(v){return ({created:'Kreirana',confirmed:'Potvrđena',shipped:'Poslata',rejected:'Odbijena',cancelled:'Otkazana',security_flag:'Bezbednosni signal',courier_export:'Izvezeno za kurira',local_delivery_approved:'Odobrena lokalna dostava',local_payment_changed:'Promenjen način plaćanja'}[v]||v)}
 
   function lastDecisionNote(o,type){
     const ev=[...(o.events||[])].reverse().find(e=>e.event_type===type);
@@ -198,9 +207,33 @@
     setBusy(detail,true);
     try{
       const data=await api('/admin/orders/'+encodeURIComponent(id)+'/local-delivery',{method:'POST'});
-      notify('Besplatna lokalna dostava je odobrena. Sada potvrdite porudžbinu.','success');
+      notify('Besplatna lokalna dostava je odobrena. IPS plaćanje je izabrano kao podrazumevano.','success');
       await loadOrders();renderDetail(data.order);
     }catch(err){notify(err.message)}finally{setBusy(detail,false)}
+  }
+
+  async function setLocalPayment(id,method){
+    setBusy(detail,true);
+    try{
+      const data=await api('/admin/orders/'+encodeURIComponent(id)+'/local-payment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method})});
+      notify(method==='ips'?'Izabrano je IPS plaćanje na račun.':'Izabrano je plaćanje gotovinom.','success');
+      await loadOrders();renderDetail(data.order);
+    }catch(err){notify(err.message)}finally{setBusy(detail,false)}
+  }
+
+  async function fetchIpsQr(id){
+    const res=await fetch(API+'/admin/orders/'+encodeURIComponent(id)+'/ips-qr',{headers:{Authorization:'Bearer '+token},credentials:'omit'});
+    if(!res.ok){let d={};try{d=await res.json()}catch{}throw new Error(d.error||'IPS QR nije moguće generisati.')}
+    return res.blob();
+  }
+
+  async function loadIpsQr(id){
+    const img=detail.querySelector('[data-ips-qr]');if(!img)return;
+    try{const blob=await fetchIpsQr(id);img.src=URL.createObjectURL(blob)}catch(err){img.replaceWith(document.createTextNode(err.message))}
+  }
+
+  async function downloadIpsQr(id){
+    try{const blob=await fetchIpsQr(id);const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`IPS-${id}.png`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(err){notify(err.message)}
   }
 
   async function shipOrder(e,id){

@@ -70,6 +70,11 @@ const SHIPPING_FEE = 420;
 const MAX_ITEMS = 20;
 const LEGAL_NOTICE_URL = "https://adriatictrade.rs/dokumenti/adriatic-trade-obavestenje-prodaja-na-daljinu.pdf";
 const WITHDRAWAL_FORM_URL = "https://adriatictrade.rs/dokumenti/adriatic-trade-obrazac-odustanak.pdf";
+const IPS_ACCOUNT = "265201031001135831";
+const IPS_PAYEE = "ADRIATIC TRADE DOO\r\nCVETNA 6\r\nSREMSKA KAMENICA";
+const IPS_GENERATOR_URL = "https://nbs.rs/QRcode/api/qr/v1/gen/500?lang=sr_RS_Latn";
+const LOCAL_PAYMENT_IPS = "Lična dostava — IPS na račun";
+const LOCAL_PAYMENT_CASH = "Lična dostava — gotovina";
 
 const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_ACTION = "checkout_order";
@@ -108,7 +113,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.5.1",
+        version: "4.6.0",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -406,7 +411,7 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|ips-qr))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
@@ -425,13 +430,45 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Dostava je već besplatna." }, 409, origin);
     }
     const now = new Date().toISOString();
-    const result = await env.DB.prepare("UPDATE orders SET shipping = 0, total = goods_total, updated_at = ? WHERE id = ? AND status = 'new' AND shipping > 0")
-      .bind(now, order.id).run();
+    const result = await env.DB.prepare("UPDATE orders SET shipping = 0, total = goods_total, payment = ?, updated_at = ? WHERE id = ? AND status = 'new' AND shipping > 0")
+      .bind(LOCAL_PAYMENT_IPS, now, order.id).run();
     if (!Number(result.meta?.changes || 0)) {
       return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
     }
-    await addOrderEvent(env.DB, order.id, "local_delivery_approved", "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu.");
+    await addOrderEvent(env.DB, order.id, "local_delivery_approved", "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu, a IPS plaćanje je izabrano kao podrazumevano.");
     return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+  }
+
+  if (request.method === "POST" && action === "local-payment") {
+    if (order.status !== "new" || !isApprovedLocalDelivery(order)) {
+      return json({ ok: false, error: "Način plaćanja može se menjati samo za odobrenu lokalnu dostavu pre potvrde porudžbine." }, 409, origin);
+    }
+    let body; try { body = await request.json(); } catch { return json({ ok: false, error: "Neispravan zahtev." }, 400, origin); }
+    const method = body?.method === "cash" ? "cash" : body?.method === "ips" ? "ips" : "";
+    if (!method) return json({ ok: false, error: "Izaberite IPS ili gotovinu." }, 400, origin);
+    const payment = method === "ips" ? LOCAL_PAYMENT_IPS : LOCAL_PAYMENT_CASH;
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE orders SET payment = ?, updated_at = ? WHERE id = ? AND status = 'new'")
+      .bind(payment, now, order.id).run();
+    await addOrderEvent(env.DB, order.id, "local_payment_changed", `Administrator · Način plaćanja za ličnu dostavu: ${payment}.`);
+    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+  }
+
+  if (request.method === "GET" && action === "ips-qr") {
+    if (!isApprovedLocalDelivery(order) || order.payment !== LOCAL_PAYMENT_IPS) {
+      return json({ ok: false, error: "IPS QR je dostupan samo za odobrenu lokalnu dostavu sa IPS plaćanjem." }, 409, origin);
+    }
+    const qr = await generateIpsQr(order);
+    if (!qr.ok) return json({ ok: false, error: "IPS QR trenutno nije moguće generisati." }, 502, origin);
+    return new Response(qr.buffer, {
+      status: 200,
+      headers: {
+        ...corsHeaders(origin),
+        "Content-Type": "image/png",
+        "Content-Disposition": `attachment; filename="ips-${sanitizeHeaderFilename(order.id)}.png"`,
+        "Cache-Control": "no-store"
+      }
+    });
   }
 
   if (request.method === "POST" && action === "operations") {
@@ -503,16 +540,23 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: true, order, alreadyDone: true }, 200, origin);
     }
 
+    const attachments = [
+      { path: LEGAL_NOTICE_URL, filename: "Adriatic-Trade-Obavestenje-o-prodaji-na-daljinu.pdf" },
+      { path: WITHDRAWAL_FORM_URL, filename: "Adriatic-Trade-Obrazac-za-odustanak.pdf" }
+    ];
+    if (order.payment === LOCAL_PAYMENT_IPS) {
+      const qr = await generateIpsQr(order);
+      if (!qr.ok) return json({ ok: false, error: "IPS QR nije generisan. Porudžbina nije potvrđena; pokušajte ponovo." }, 502, origin);
+      attachments.push({ filename: `IPS-${order.id}.png`, content: arrayBufferToBase64(qr.buffer) });
+    }
+
     const sendResult = await sendEmail(env.RESEND_API_KEY, {
       from: FROM_EMAIL,
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
       subject: `Porudžbina ${order.id} je potvrđena`,
       html: statusConfirmedEmailHtml(order),
-      attachments: [
-        { path: LEGAL_NOTICE_URL, filename: "Adriatic-Trade-Obavestenje-o-prodaji-na-daljinu.pdf" },
-        { path: WITHDRAWAL_FORM_URL, filename: "Adriatic-Trade-Obrazac-za-odustanak.pdf" }
-      ],
+      attachments,
       tags: [
         { name: "category", value: "order_confirmed" },
         { name: "order_id", value: order.id }
@@ -810,6 +854,14 @@ async function safeDbUpdate(db, sql, params) {
 
 function statusConfirmedEmailHtml(order) {
   const rows = customerOrderRows(order);
+  const paymentNotice = order.payment === LOCAL_PAYMENT_IPS
+    ? `<div style="margin-top:18px;padding:16px 18px;background:#eef5f8;border:1px solid #d9e7ec;border-radius:12px;color:#40545f;font-size:14px;line-height:1.6;">
+        <strong style="display:block;color:#10283d;margin-bottom:4px;">IPS plaćanje na račun</strong>
+        U prilogu je PNG slika NBS IPS QR koda za iznos <strong>${formatRsd(order.total)}</strong>. Skenirajte je drugim telefonom ili je sačuvajte pa uvezite iz galerije u aplikaciji svoje banke. Robu predajemo nakon provere evidentirane uplate.
+      </div>`
+    : order.payment === LOCAL_PAYMENT_CASH
+      ? `<div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">Lična dostava je besplatna. Plaćanje je <strong>gotovinom prilikom preuzimanja</strong>.</div>`
+      : `<div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">Obavestićemo vas čim pošiljku preuzme kurirska služba. Plaćanje ostaje <strong>pouzećem</strong>.</div>`;
   return emailShell(`
     <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#b69a69;font-weight:700;">Porudžbina je potvrđena</div>
     <h1 style="font-size:25px;line-height:1.22;margin:8px 0 10px;color:#10283d;">Vaša porudžbina je potvrđena.</h1>
@@ -819,9 +871,7 @@ function statusConfirmedEmailHtml(order) {
 
     ${customerDeliveryBlock(order)}
 
-    <div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">
-      Obavestićemo vas čim pošiljku preuzme kurirska služba. Plaćanje ostaje <strong>pouzećem</strong>.
-    </div>
+    ${paymentNotice}
     <div style="margin-top:16px;padding:16px 18px;background:#eef5f8;border:1px solid #d9e7ec;border-radius:12px;color:#40545f;font-size:13px;line-height:1.6;">
       <strong style="display:block;color:#10283d;margin-bottom:4px;">Dokumentacija za kupovinu na daljinu</strong>
       U prilogu ovog emaila dostavljamo <strong>Obaveštenje o uslovima prodaje na daljinu</strong> i propisani <strong>Obrazac za odustanak od ugovora</strong>. Sačuvajte ih zajedno sa ovom potvrdom porudžbine.
@@ -959,6 +1009,54 @@ function arrayBufferToBase64(buffer) {
     binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
   }
   return btoa(binary);
+}
+
+function isApprovedLocalDelivery(order) {
+  return order.delivery.method === "Dostava na adresu"
+    && normalizePlace(order.delivery.city) === "novi sad"
+    && order.shipping === 0
+    && (order.events || []).some(event => event.event_type === "local_delivery_approved");
+}
+
+function ipsReference(orderId) {
+  const digits = String(orderId || "").replace(/\D/g, "");
+  if (digits) return `00${digits.slice(-18)}`;
+  let hash = 2166136261;
+  for (const char of String(orderId || "")) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+  return `00${String(hash).padStart(10, "0")}`;
+}
+
+function ipsFields(order) {
+  return {
+    K: "PR",
+    V: "01",
+    C: "1",
+    R: IPS_ACCOUNT,
+    N: IPS_PAYEE,
+    I: `RSD${Number(order.total || 0).toFixed(2).replace(".", ",")}`,
+    SF: "289",
+    S: `PORUDZBINA ${String(order.id || "").slice(-23)}`.slice(0, 35),
+    RO: ipsReference(order.id)
+  };
+}
+
+async function generateIpsQr(order) {
+  try {
+    const response = await fetch(IPS_GENERATOR_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "image/png" },
+      body: JSON.stringify(ipsFields(order))
+    });
+    const contentType = response.headers.get("Content-Type") || "";
+    if (!response.ok || !contentType.toLowerCase().includes("image")) {
+      console.error("NBS IPS QR generation failed", response.status, await response.text().catch(() => ""));
+      return { ok: false };
+    }
+    return { ok: true, buffer: await response.arrayBuffer() };
+  } catch (error) {
+    console.error("NBS IPS QR generation failed", error);
+    return { ok: false };
+  }
 }
 
 function safePdfFilename(name) {
