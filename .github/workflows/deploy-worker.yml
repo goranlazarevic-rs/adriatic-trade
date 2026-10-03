@@ -64,7 +64,14 @@ jobs:
 
       - name: Verify production Worker
         run: |
-          RESPONSE=$(curl --fail-with-body --silent --show-error \
-            https://adriatic-trade-orders.lakifinance.workers.dev/)
-          printf '%s\n' "$RESPONSE"
-          printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.6.0" and .database == true and .receipts == true and .security == true'
+          for ATTEMPT in 1 2 3 4 5 6; do
+            RESPONSE=$(curl --fail-with-body --silent --show-error \
+              -H 'Cache-Control: no-cache' \
+              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.6.0-$ATTEMPT")
+            printf '%s\n' "$RESPONSE"
+            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.6.0" and .database == true and .receipts == true and .security == true'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
