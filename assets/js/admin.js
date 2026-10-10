@@ -95,21 +95,26 @@
     const localDeliveryEligible=o.status==='new'&&o.delivery.method==='Dostava na adresu'&&String(o.delivery.city||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()==='novi sad'&&o.shipping>0;
     const localApproved=(o.events||[]).some(e=>e.event_type==='local_delivery_approved');
     const ipsPayment=o.payment==='Lična dostava — IPS na račun';
-    const cashPayment=o.payment==='Lična dostava — gotovina';
-    const localPaymentPanel=localApproved?`<div class="notice"><b>Besplatna lična dostava je odobrena.</b> Izaberite način plaćanja pre potvrde porudžbine.</div>
-      <div class="admin-action-row admin-action-row-secondary"><button class="btn ${ipsPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="ips" ${ipsPayment?'disabled':''}>IPS na račun${ipsPayment?' ✓':''}</button><button class="btn ${cashPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="cash" ${cashPayment?'disabled':''}>Gotovina${cashPayment?' ✓':''}</button></div>
-      ${ipsPayment?`<div class="admin-box" style="margin-top:14px"><h3>IPS QR za kupca</h3><p>Kupac dobija ovu PNG sliku uz email potvrde. Može da je skenira ili uveze iz galerije u bankarsku aplikaciju.</p><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><img data-ips-qr alt="NBS IPS QR za porudžbinu ${esc(o.id)}" style="width:220px;max-width:100%;background:#fff;border:1px solid #ddd;border-radius:10px;padding:8px"><button class="btn btn-secondary" type="button" data-download-ips>Preuzmi IPS QR</button></div></div>`:''}`:'';
-    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email sa konačnim iznosom.</p>${localDeliveryEligible?`<div class="notice"><b>Adresa je u Novom Sadu.</b> Ako je adresa u užem centru i dostavljate lično, prvo odobrite besplatnu lokalnu dostavu. Ukupan iznos biće umanjen za ${esc(money(o.shipping))}.</div><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-secondary" type="button" data-local-delivery>Odobri besplatnu lokalnu dostavu</button></div>`:localPaymentPanel}<div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
-    if(o.status==='confirmed'&&localApproved){const s=o.operations?.localDelivery||{};actions=`<div class="admin-actions"><h3>Dogovor lične isporuke</h3><p>Posle telefonskog/Viber dogovora unesite termin i mesto. Kupac odmah dobija email sa potvrdom dogovora.</p><form class="admin-ship-form" data-local-schedule-form>
+    const bankPayment=o.payment==='Lična dostava — uplata na račun';
+    const supportedPayment=ipsPayment||bankPayment;
+    const paymentVerified=hasVerifiedBankPayment(o.operations);
+    const localPaymentPanel=localApproved?`<div class="notice"><b>Besplatna lična dostava je odobrena.</b> Plaćanje je na račun firme, IPS QR kodom ili bankarskim transferom. ${!supportedPayment?'<br>Ranije izabrani način plaćanja ostaje u istoriji. Izaberite uplatu na račun pre nastavka.':''}</div>
+      ${o.operations.paymentStatus==='unpaid'?`<div class="admin-action-row admin-action-row-secondary"><button class="btn ${ipsPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="ips" ${ipsPayment?'disabled':''}>IPS na račun${ipsPayment?' ✓':''}</button><button class="btn ${bankPayment?'btn-primary':'btn-secondary'}" type="button" data-local-payment="bank_transfer" ${bankPayment?'disabled':''}>Uplata na račun${bankPayment?' ✓':''}</button></div>`:''}
+      ${supportedPayment?bankTransferPanel(o):''}
+      ${ipsPayment?`<div class="admin-box" style="margin-top:14px"><h3>IPS QR za kupca</h3><p>Ako je servis dostupan, kupac dobija PNG sliku uz potvrdu. Instrukcije za uplatu na račun dostupne su i bez QR koda.</p><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><img data-ips-qr alt="NBS IPS QR za porudžbinu ${esc(o.id)}" style="width:220px;max-width:100%;background:#fff;border:1px solid #ddd;border-radius:10px;padding:8px"><button class="btn btn-secondary" type="button" data-download-ips>Preuzmi IPS QR</button></div></div>`:''}`:'';
+    if(o.status==='new')actions=`<div class="admin-actions"><h3>Sledeći korak</h3><p>Proverite podatke i raspoloživost robe. Potvrdom kupac automatski dobija email sa konačnim iznosom.</p>${localDeliveryEligible?`<div class="notice"><b>Adresa je u Novom Sadu.</b> Ako je adresa u užem centru i dostavljate lično, prvo odobrite besplatnu lokalnu dostavu. Ukupan iznos biće umanjen za ${esc(money(o.shipping))}.</div><div class="admin-action-row admin-action-row-secondary"><button class="btn btn-secondary" type="button" data-local-delivery>Odobri besplatnu lokalnu dostavu</button></div>`:localPaymentPanel}<div class="admin-action-row"><button class="btn btn-primary" type="button" data-confirm ${localApproved&&!supportedPayment?'disabled':''}>Potvrdi porudžbinu</button><button class="btn btn-danger" type="button" data-reject>Odbij porudžbinu</button></div></div>`;
+    if(o.status==='confirmed'&&localApproved){const s=o.operations?.localDelivery||{};actions=`<div class="admin-actions">${localPaymentPanel}${supportedPayment?`<h3>Dogovor lične isporuke</h3><p>Posle telefonskog/Viber dogovora unesite termin i mesto. Kupac odmah dobija email sa potvrdom dogovora.</p><form class="admin-ship-form" data-local-schedule-form>
       <div class="field"><label>Datum *</label><input name="date" type="date" value="${esc(s.date||'')}" required></div>
       <div class="field"><label>Vreme ili vremenski okvir *</label><input name="timeWindow" maxlength="80" value="${esc(s.timeWindow||'')}" placeholder="npr. 17:00–19:00" required></div>
       <div class="field wide"><label>Dogovoreno mesto *</label><textarea name="location" maxlength="300" rows="3" placeholder="Tačna adresa ili prepoznatljivo mesto sastanka" required>${esc(s.location||o.delivery.address)}</textarea></div>
       <div class="wide"><button class="btn btn-primary" type="submit">${s.notifiedAt?'Izmeni termin i ponovo obavesti kupca':'Potvrdi termin i obavesti kupca'}</button></div>
     </form>${s.notifiedAt?`<div class="notice" style="margin-top:16px"><b>Dogovor je poslat kupcu:</b> ${esc(s.date)} · ${esc(s.timeWindow)} · ${esc(s.location)}</div><form class="admin-ship-form" data-local-delivered-form>
       <div class="field wide"><label>Fiskalni račun (PDF)</label><input name="receipt" type="file" accept="application/pdf,.pdf"><div class="admin-file-note">PDF do 5 MB. Ako je već povezan u evidenciji, nije potrebno ponovo ga dodavati.</div></div>
-      <label class="checkbox wide"><input type="checkbox" name="paymentConfirmed" value="yes" ${o.operations?.paymentStatus==='paid'?'checked disabled':''} required><span>${cashPayment?'Potvrđujem da je gotovina primljena.':'Proverio/la sam račun firme i uplata je evidentirana.'}</span></label>
+      <div class="field"><label>Datum uplate na račun *</label><input name="remittanceDate" type="date" value="${esc(o.operations.remittanceDate||'')}" ${paymentVerified?'readonly':''} required></div>
+      <div class="field"><label>Referenca sa bankarskog izvoda *</label><input name="paymentReference" maxlength="160" value="${esc(o.operations.paymentReference||'')}" ${paymentVerified?'readonly':''} required></div>
+      <label class="checkbox wide"><input type="checkbox" name="paymentConfirmed" value="yes" ${paymentVerified?'checked disabled':''} required><span>Proverio/la sam račun firme i uplata je evidentirana.</span></label>
       <div class="wide"><button class="btn btn-primary" type="submit">Označi kao lično isporučeno</button></div>
-    </form>`:''}<div class="admin-action-row admin-action-row-secondary"><button class="btn btn-danger-outline" type="button" data-cancel>Otkaži porudžbinu</button></div></div>`}
+    </form>`:''}`:'<p>Nastavak isporuke zahteva uplatu na račun. Postojeća naplata se ne pretvara automatski u bankarski transfer.</p>'}<div class="admin-action-row admin-action-row-secondary"><button class="btn btn-danger-outline" type="button" data-cancel>Otkaži porudžbinu</button></div></div>`}
     if(o.status==='confirmed'&&!localApproved)actions=`<div class="admin-actions"><h3>Predaja kuriru</h3><p>Unesite podatke pošiljke. Fiskalni račun može biti dodat kao PDF i biće poslat kupcu u prilogu.</p><form class="admin-ship-form" data-ship-form>
       <div class="field"><label>Kurirska služba *</label><input name="courier" placeholder="npr. D Express" required></div>
       <div class="field"><label>Broj pošiljke *</label><input name="trackingNumber" required></div>
@@ -228,7 +233,7 @@
     setBusy(detail,true);
     try{
       const data=await api('/admin/orders/'+encodeURIComponent(id)+'/local-payment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method})});
-      notify(method==='ips'?'Izabrano je IPS plaćanje na račun.':'Izabrano je plaćanje gotovinom.','success');
+      notify(method==='ips'?'Izabrano je IPS plaćanje na račun.':'Izabrana je uplata na račun.','success');
       await loadOrders();renderDetail(data.order);
     }catch(err){notify(err.message)}finally{setBusy(detail,false)}
   }
@@ -276,7 +281,7 @@
     const form=e.currentTarget;
     const file=form.elements.receipt?.files?.[0];
     if(file&&file.size>5*1024*1024){notify('PDF može imati najviše 5 MB.');return}
-    if(!form.elements.paymentConfirmed?.checked){notify('Potvrdite da je uplata ili gotovina evidentirana.');return}
+    if(!form.elements.paymentConfirmed?.checked){notify('Proverite račun firme i potvrdite da je uplata evidentirana.');return}
     if(!confirm('Potvrđujete da je roba predata kupcu i da je naplata evidentirana? Kupac će dobiti završni email.'))return;
     const fd=new FormData(form);
     setBusy(detail,true);
@@ -295,9 +300,12 @@
   }
 
 
+  function hasVerifiedBankPayment(v={}){return v.paymentStatus==='paid'&&v.paymentMethod==='bank_transfer'&&!!(v.paymentVerifiedAt&&v.remittanceDate&&v.paymentReference)}
+  function bankTransferPanel(o){const b=o.bankTransfer;if(!b)return '';return `<div class="admin-box" style="margin-top:14px"><h3>Instrukcije za uplatu na račun</h3><div class="admin-info">${row('Primalac',b.payee)}${row('Račun',b.account)}${row('Iznos',money(b.amount))}${row('Šifra plaćanja',b.paymentCode)}${row('Model',b.model)}${row('Poziv na broj',b.reference)}${row('Svrha',b.purpose)}</div><p>Koristite ove podatke i kada IPS QR nije dostupan. Robu predajemo nakon provere uplate.</p></div>`}
+  function cashOnDeliveryAmount(o){return ['Lična dostava — IPS na račun','Lična dostava — uplata na račun'].includes(o.payment)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total}
   const opsLabels={pending:'Čeka pripremu',ready:'Spremna za slanje',shipped:'Poslata',delivered:'Isporučena',returned:'Vraćena',failed:'Neuspešna isporuka',unpaid:'Nenaplaćena',paid:'Naplaćena',refunded:'Refundirana',approved:'Proverena — prihvatljiva',rejected:'Proverena — odbijena'};
   function eventNote(e){if(e.event_type!=='operations')return e.note;try{const n=JSON.parse(e.note);return n.actor+' · '+n.reason+' · '+n.changes.map(c=>c.key+': '+(opsLabels[c.before]||c.before||'—')+' → '+(opsLabels[c.after]||c.after||'—')).join('; ')}catch{return e.note}}
-  function operationsForm(o){const v=o.operations||{};
+  function operationsForm(o){const v=o.operations||{};const local=(o.events||[]).some(e=>e.event_type==='local_delivery_approved')||o.courier==='Lična dostava';
     if(['rejected','cancelled'].includes(o.status)) {
       return `<div class="admin-box admin-operations-locked"><h3>Operativna evidencija — zaključana</h3><p>Porudžbina je ${o.status==='rejected'?'odbijena':'otkazana'}. Priprema, isporuka i štampanje nalepnice su obustavljeni. Sačuvani podaci i istorija ostaju dostupni za pregled.</p><div class="admin-info">
         ${row('Isporuka','Obustavljena')}
@@ -316,7 +324,8 @@
     return `<div class="admin-box"><h3>Operativna evidencija</h3><form data-operations class="admin-ship-form">
       ${select('fulfillment','Isporuka',['pending','ready','shipped','delivered','returned','failed'])}
       ${select('paymentStatus','Naplata',['unpaid','paid','refunded'])}
-      ${field('remittanceDate','Datum prenosa novca od kurira','date')}${field('paymentReference','Referenca naplate / refundacije')}
+      ${field('remittanceDate',local?'Datum uplate na račun':'Datum prenosa novca od kurira','date')}${field('paymentReference',local?'Referenca sa bankarskog izvoda / refundacije':'Referenca naplate / refundacije')}
+      ${local?'<label class="checkbox wide"><input type="checkbox" name="paymentConfirmed" value="yes"><span>Proverio/la sam račun firme i uplata je evidentirana (obavezno za novu evidenciju naplate).</span></label>':''}
       ${select('riskReview','Provera porudžbine',['pending','approved','rejected'])}
       <div class="field wide"><label>Interna beleška<textarea name="internalNote" maxlength="2000" rows="3">${esc(v.internalNote||'')}</textarea></label><small>Vidljivo samo administratoru.</small></div>
       <div class="wide"><h3>Fiskalizacija</h3><p>Priprema za integraciju. Ovde se evidentira račun iz fiskalnog sistema; unos broja ne izdaje niti proverava račun.</p></div>
@@ -329,13 +338,13 @@
     if(['rejected','cancelled'].includes(o.status) || o.operations.fulfillment==='returned') {notify('Ova porudžbina nije za isporuku.');return;}
     const w=window.open('','_blank');if(!w){notify('Dozvolite otvaranje prozora za štampu.');return;}
     const size=detail.querySelector('[data-label-size]').value.split('x');
-    w.document.write(`<!doctype html><html lang="sr"><head><title>Nalepnica ${esc(o.id)}</title><style>@page{size:${size[0]}mm ${size[1]}mm;margin:5mm}body{font:14px Arial;color:#000;overflow-wrap:anywhere}h2{font-size:20px}p{margin:10px 0}</style></head><body><strong>ADRIATIC TRADE d.o.o.</strong><p>Cvetna 6, 21208 Sremska Kamenica<br>+381 65 216 9764</p><hr><h2>${esc(o.customer.firstName+' '+o.customer.lastName)}</h2><p>${esc(o.delivery.address)}<br>${esc(o.delivery.postalCode+' '+o.delivery.city)}<br>${esc(o.customer.phone)}</p><p>${esc(o.delivery.method)}</p><hr><p>Porudžbina: ${esc(o.id)}<br>${o.trackingNumber?'Pošiljka: '+esc(o.trackingNumber)+'<br>':''}Pouzeće: ${esc(money(['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total))}</p><small>Adresna nalepnica — nije kurirski dokument.</small></body></html>`);
+    w.document.write(`<!doctype html><html lang="sr"><head><title>Nalepnica ${esc(o.id)}</title><style>@page{size:${size[0]}mm ${size[1]}mm;margin:5mm}body{font:14px Arial;color:#000;overflow-wrap:anywhere}h2{font-size:20px}p{margin:10px 0}</style></head><body><strong>ADRIATIC TRADE d.o.o.</strong><p>Cvetna 6, 21208 Sremska Kamenica<br>+381 65 216 9764</p><hr><h2>${esc(o.customer.firstName+' '+o.customer.lastName)}</h2><p>${esc(o.delivery.address)}<br>${esc(o.delivery.postalCode+' '+o.delivery.city)}<br>${esc(o.customer.phone)}</p><p>${esc(o.delivery.method)}</p><hr><p>Porudžbina: ${esc(o.id)}<br>${o.trackingNumber?'Pošiljka: '+esc(o.trackingNumber)+'<br>':''}Pouzeće: ${esc(money(cashOnDeliveryAmount(o)))}</p><small>Adresna nalepnica — nije kurirski dokument.</small></body></html>`);
     w.document.close();w.focus();w.print();
   }
   function exportOrders(){
     const header=['Porudžbina','Datum','Status','Isporuka','Naplata','Ime','Prezime','Telefon','Email','Adresa','Poštanski broj','Mesto','Kurir','Pošiljka','Roba RSD','Dostava RSD','Ukupno RSD','Pouzeće RSD','Datum prenosa','Fiskalni račun'];
     const cell=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
-    const rows=orders.map(o=>[o.id,o.createdAt,statusLabel(o.status),opsLabels[o.operations.fulfillment],opsLabels[o.operations.paymentStatus],o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.courier,o.trackingNumber,o.goodsTotal,o.shipping,o.total,['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total,o.operations.remittanceDate,o.operations.fiscalNumber]);
+    const rows=orders.map(o=>[o.id,o.createdAt,statusLabel(o.status),opsLabels[o.operations.fulfillment],opsLabels[o.operations.paymentStatus],o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.courier,o.trackingNumber,o.goodsTotal,o.shipping,o.total,cashOnDeliveryAmount(o),o.operations.remittanceDate,o.operations.fiscalNumber]);
     const url=URL.createObjectURL(new Blob(['\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
     const a=document.createElement('a');a.href=url;a.download='porudzbine.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }

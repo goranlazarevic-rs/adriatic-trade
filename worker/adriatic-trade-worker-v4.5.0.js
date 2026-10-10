@@ -74,7 +74,8 @@ const IPS_ACCOUNT = "265201031001135831";
 const IPS_PAYEE = "ADRIATIC TRADE DOO\r\nCVETNA 6\r\nSREMSKA KAMENICA";
 const IPS_GENERATOR_URL = "https://nbs.rs/QRcode/api/qr/v1/gen/500?lang=sr_RS_Latn";
 const LOCAL_PAYMENT_IPS = "Lična dostava — IPS na račun";
-const LOCAL_PAYMENT_CASH = "Lična dostava — gotovina";
+const LOCAL_PAYMENT_BANK = "Lična dostava — uplata na račun";
+const IPS_TIMEOUT_MS = 5000;
 
 const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_ACTION = "checkout_order";
@@ -113,7 +114,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.7.0",
+        version: "4.7.1",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -340,7 +341,8 @@ async function handleAdmin(request, env, url, origin) {
   )`).run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS courier_export_access(id INTEGER PRIMARY KEY AUTOINCREMENT,batch_id TEXT NOT NULL,created_at TEXT NOT NULL,actor TEXT NOT NULL)').run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_courier_export_batch ON courier_export_orders(batch_id)').run();
-  const exportReady="orders.status='confirmed' AND json_extract(order_operations.data_json,'$.fulfillment')='ready' AND NOT EXISTS(SELECT 1 FROM courier_export_orders WHERE order_id=orders.id)";
+  const excludeLocal="NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved')";
+  const exportReady=excludeLocal+" AND orders.status='confirmed' AND json_extract(order_operations.data_json,'$.fulfillment')='ready' AND NOT EXISTS(SELECT 1 FROM courier_export_orders WHERE order_id=orders.id)";
   if(request.method==='GET' && url.pathname==='/admin/attention') {
     const result=await env.DB.prepare(`SELECT
       COALESCE(SUM(orders.status='new'),0) AS newOrders,
@@ -404,7 +406,7 @@ async function handleAdmin(request, env, url, origin) {
     }
     const attention=url.searchParams.get('attention');
     const actions={new:"orders.status='new'",prepare:"orders.status='confirmed' AND COALESCE(json_extract((SELECT data_json FROM order_operations WHERE order_id=orders.id),'$.fulfillment'),'pending')='pending'",export:"orders.status='confirmed' AND json_extract((SELECT data_json FROM order_operations WHERE order_id=orders.id),'$.fulfillment')='ready' AND NOT EXISTS(SELECT 1 FROM courier_export_orders WHERE order_id=orders.id)",unpaid:"orders.status='shipped' AND COALESCE(json_extract((SELECT data_json FROM order_operations WHERE order_id=orders.id),'$.paymentStatus'),'unpaid')='unpaid'"};
-    if(actions[attention])conditions.push(actions[attention]);
+    if(actions[attention])conditions.push(attention==='export'?`(${actions[attention]}) AND ${excludeLocal}`:actions[attention]);
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const stmt = env.DB.prepare(`SELECT orders.*, (SELECT data_json FROM order_operations WHERE order_id=orders.id) AS operations_json, EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='security_flag') AS security_flagged FROM orders ${where} ORDER BY created_at DESC LIMIT ?`).bind(...params, limit);
     const result = await stmt.all();
@@ -440,17 +442,33 @@ async function handleAdmin(request, env, url, origin) {
   }
 
   if (request.method === "POST" && action === "local-payment") {
-    if (order.status !== "new" || !isApprovedLocalDelivery(order)) {
-      return json({ ok: false, error: "Način plaćanja može se menjati samo za odobrenu lokalnu dostavu pre potvrde porudžbine." }, 409, origin);
+    if (!["new", "confirmed"].includes(order.status) || !isApprovedLocalDelivery(order) || order.operations.paymentStatus !== "unpaid") {
+      return json({ ok: false, error: "Način plaćanja može se menjati samo za otvorenu, nenaplaćenu ličnu dostavu." }, 409, origin);
     }
     let body; try { body = await request.json(); } catch { return json({ ok: false, error: "Neispravan zahtev." }, 400, origin); }
-    const method = body?.method === "cash" ? "cash" : body?.method === "ips" ? "ips" : "";
-    if (!method) return json({ ok: false, error: "Izaberite IPS ili gotovinu." }, 400, origin);
-    const payment = method === "ips" ? LOCAL_PAYMENT_IPS : LOCAL_PAYMENT_CASH;
+    if (!["ips", "bank_transfer"].includes(body?.method)) {
+      return json({ ok: false, error: "Lična dostava se plaća isključivo na račun, IPS QR kodom ili bankarskim transferom." }, 400, origin);
+    }
+    const payment = body.method === "ips" ? LOCAL_PAYMENT_IPS : LOCAL_PAYMENT_BANK;
+    if (payment === order.payment) return json({ ok: true, order, alreadyDone: true }, 200, origin);
+    // Previously confirmed cash orders require explicit conversion and new customer instructions.
+    if (order.status === "confirmed") {
+      if (!env.RESEND_API_KEY) return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
+      const result = await sendEmail(env.RESEND_API_KEY, {
+        from: FROM_EMAIL, to: [order.customer.email], reply_to: BUSINESS_EMAIL,
+        subject: `Uputstvo za uplatu na račun — ${order.id}`,
+        html: emailShell(`<h1>Uplata za ličnu dostavu</h1><p>Za porudžbinu ${escapeHtml(order.id)} način plaćanja je promenjen u: ${escapeHtml(payment)}.</p>${bankTransferEmailHtml(order)}`)
+      }, `local-payment/${order.id}/${order.operationsRevision}/${body.method}`);
+      if (!result.ok) return json({ ok: false, error: "Email sa instrukcijama nije poslat. Način plaćanja nije promenjen." }, 502, origin);
+    }
     const now = new Date().toISOString();
-    await env.DB.prepare("UPDATE orders SET payment = ?, updated_at = ? WHERE id = ? AND status = 'new'")
-      .bind(payment, now, order.id).run();
-    await addOrderEvent(env.DB, order.id, "local_payment_changed", `Administrator · Način plaćanja za ličnu dostavu: ${payment}.`);
+    const results = await env.DB.batch([
+      env.DB.prepare("UPDATE orders SET payment = ?, updated_at = ? WHERE id = ? AND status = ? AND payment = ? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)")
+        .bind(payment, now, order.id, order.status, order.payment, order.operationsRevision),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_payment_changed', ?, ? WHERE changes()=1")
+        .bind(order.id, `Administrator (zajednički ključ) · Plaćanje: ${order.payment} → ${payment}.` + (order.status === "confirmed" ? " Kupcu su poslate instrukcije za uplatu." : ""), now)
+    ]);
+    if (!results[0].meta.changes) return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
     return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
   }
 
@@ -459,7 +477,7 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "IPS QR je dostupan samo za odobrenu lokalnu dostavu sa IPS plaćanjem." }, 409, origin);
     }
     const qr = await generateIpsQr(order);
-    if (!qr.ok) return json({ ok: false, error: "IPS QR trenutno nije moguće generisati." }, 502, origin);
+    if (!qr.ok) return json({ ok: false, error: "IPS QR trenutno nije dostupan. Koristite instrukcije za uplatu na račun." }, 502, origin);
     return new Response(qr.buffer, {
       status: 200,
       headers: {
@@ -475,6 +493,7 @@ async function handleAdmin(request, env, url, origin) {
     if (order.status !== "confirmed" || !isApprovedLocalDelivery(order)) {
       return json({ ok: false, error: "Termin se može dogovoriti samo za potvrđenu ličnu dostavu." }, 409, origin);
     }
+    if (!isBankLocalPayment(order)) return json({ ok: false, error: "Prvo izaberite uplatu na račun za ličnu dostavu." }, 409, origin);
     let body; try { body = await request.json(); } catch { return json({ ok: false, error: "Neispravan zahtev." }, 400, origin); }
     const date = clean(body?.date, 10);
     const timeWindow = clean(body?.timeWindow, 80);
@@ -514,10 +533,14 @@ async function handleAdmin(request, env, url, origin) {
     const contentType = request.headers.get("Content-Type") || "";
     if (!contentType.includes("multipart/form-data")) return json({ ok: false, error: "Očekivan je formular za završetak isporuke." }, 415, origin);
     let form; try { form = await request.formData(); } catch { return json({ ok: false, error: "Neispravan formular." }, 400, origin); }
-    const paymentConfirmed = form.get("paymentConfirmed") === "yes";
-    if (!paymentConfirmed && order.operations.paymentStatus !== "paid") {
-      return json({ ok: false, error: order.payment === LOCAL_PAYMENT_CASH ? "Potvrdite da je gotovina primljena." : "Prvo proverite uplatu na računu i potvrdite da je evidentirana." }, 409, origin);
+    if (!isBankLocalPayment(order) || order.operations.paymentStatus === "refunded") {
+      return json({ ok: false, error: "Lična isporuka zahteva važeću uplatu na račun." }, 409, origin);
     }
+    const verification = verifiedBankPayment(order, {
+      paymentConfirmed: form.get("paymentConfirmed"),
+      remittanceDate: form.get("remittanceDate"), paymentReference: form.get("paymentReference")
+    });
+    if (!verification.ok) return json({ ok: false, error: verification.error }, 409, origin);
 
     let attachment = null;
     let receiptKey = order.receiptKey || "";
@@ -553,12 +576,16 @@ async function handleAdmin(request, env, url, origin) {
     }
 
     const now = new Date().toISOString();
-    const next = { ...order.operations, fulfillment: "delivered", paymentStatus: "paid", localDelivery: { ...order.operations.localDelivery, deliveredAt: now } };
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed'`).bind(now, now, receiptKey || null, receiptFilename || null, order.id),
-      env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=?").bind(JSON.stringify(next), order.id)
+    const next = { ...order.operations, ...verification.data, fulfillment: "delivered", paymentStatus: "paid", localDelivery: { ...order.operations.localDelivery, deliveredAt: now } };
+    const results = await env.DB.batch([
+      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed' AND payment=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)`).bind(now, now, receiptKey || null, receiptFilename || null, order.id, order.payment, order.operationsRevision),
+      env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=? AND revision=? AND changes()=1").bind(JSON.stringify(next), order.id, order.operationsRevision),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_delivered', ?, ? WHERE changes()=1").bind(order.id, `Administrator (zajednički ključ) · Lična isporuka završena. Uplata na račun proverena: ${next.remittanceDate}; referenca: ${next.paymentReference}. Kupac je obavešten.`, now)
     ]);
-    await addOrderEvent(env.DB, order.id, "local_delivery_delivered", "Lična dostava je završena, a naplata evidentirana. Kupac je obavešten.");
+    if (!results[0].meta.changes) {
+      if (attachment && env.RECEIPTS) await env.RECEIPTS.delete(receiptKey).catch(() => {});
+      return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
+    }
     return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
   }
 
@@ -581,6 +608,20 @@ async function handleAdmin(request, env, url, origin) {
     if(next.paymentStatus==='refunded' && !['paid','refunded'].includes(current.paymentStatus)) return json({ok:false,error:'Refundiranje zahteva evidentiranu naplatu.'},409,origin);
     for(const [key,max] of [['internalNote',2000],['paymentReference',160],['fiscalNumber',160],['fiscalProvider',100],['fiscalReference',160]]) if(body[key]!==undefined) next[key]=clean(body[key],max);
     if(body.remittanceDate!==undefined) { if(body.remittanceDate && !/^\d{4}-\d{2}-\d{2}$/.test(body.remittanceDate)) return json({ok:false,error:'Neispravan datum.'},400,origin); next.remittanceDate=body.remittanceDate; }
+    if (isApprovedLocalDelivery(order) && next.paymentStatus === 'paid') {
+      if (!isBankLocalPayment(order)) {
+        if (current.paymentStatus !== 'paid') return json({ok:false,error:'Prvo izaberite uplatu na račun za ličnu dostavu.'},409,origin);
+        // Keep historical paid cash records unchanged; never create a new cash collection.
+      } else if (current.paymentStatus !== 'paid' || !hasVerifiedBankPayment(current) || next.remittanceDate !== current.remittanceDate || next.paymentReference !== current.paymentReference) {
+        if (!['confirmed','shipped'].includes(order.status)) return json({ok:false,error:'Prvo potvrdite porudžbinu.'},409,origin);
+        const verification=verifiedBankPayment(order,body);
+        if(!verification.ok) return json({ok:false,error:verification.error},409,origin);
+        Object.assign(next,verification.data);
+      }
+    }
+    if (isApprovedLocalDelivery(order) && current.paymentStatus === 'paid' && next.paymentStatus === 'unpaid') {
+      next.paymentMethod=''; next.paymentVerifiedAt='';
+    }
     // Manual linking only: issuing fiscal documents is reserved for the provider adapter.
     next.fiscalStatus=next.fiscalNumber?'linked':'not_linked';
     const reason=clean(body.reason,500);
@@ -635,10 +676,16 @@ async function handleAdmin(request, env, url, origin) {
       { path: LEGAL_NOTICE_URL, filename: "Adriatic-Trade-Obavestenje-o-prodaji-na-daljinu.pdf" },
       { path: WITHDRAWAL_FORM_URL, filename: "Adriatic-Trade-Obrazac-za-odustanak.pdf" }
     ];
+    if (isApprovedLocalDelivery(order) && !isBankLocalPayment(order)) {
+      return json({ ok: false, error: "Prvo izaberite IPS ili uplatu na račun. Gotovina nije dostupna za ličnu dostavu." }, 409, origin);
+    }
+    let qrAttached = false;
     if (order.payment === LOCAL_PAYMENT_IPS) {
       const qr = await generateIpsQr(order);
-      if (!qr.ok) return json({ ok: false, error: "IPS QR nije generisan. Porudžbina nije potvrđena; pokušajte ponovo." }, 502, origin);
-      attachments.push({ filename: `IPS-${order.id}.png`, content: arrayBufferToBase64(qr.buffer) });
+      if (qr.ok) {
+        attachments.push({ filename: `IPS-${order.id}.png`, content: arrayBufferToBase64(qr.buffer) });
+        qrAttached = true;
+      }
     }
 
     const sendResult = await sendEmail(env.RESEND_API_KEY, {
@@ -646,7 +693,7 @@ async function handleAdmin(request, env, url, origin) {
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
       subject: `Porudžbina ${order.id} je potvrđena`,
-      html: statusConfirmedEmailHtml(order),
+      html: statusConfirmedEmailHtml(order, qrAttached),
       attachments,
       tags: [
         { name: "category", value: "order_confirmed" },
@@ -662,7 +709,7 @@ async function handleAdmin(request, env, url, origin) {
     const now = new Date().toISOString();
     await env.DB.prepare("UPDATE orders SET status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ?")
       .bind(now, now, order.id).run();
-    await addOrderEvent(env.DB, order.id, "confirmed", "Porudžbina je potvrđena i kupac je obavešten.");
+    await addOrderEvent(env.DB, order.id, "confirmed", "Porudžbina je potvrđena i kupac je obavešten." + (isBankLocalPayment(order) ? (qrAttached ? " IPS QR i instrukcije za uplatu su poslati." : " Poslate su instrukcije za bankarski transfer bez QR priloga.") : ""));
     return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
   }
 
@@ -740,6 +787,7 @@ async function handleAdmin(request, env, url, origin) {
   }
 
   if (request.method === "POST" && action === "ship") {
+    if (isApprovedLocalDelivery(order)) return json({ ok: false, error: "Lična dostava se završava kroz proveru uplate i ličnu isporuku." }, 409, origin);
     if (order.status === "shipped") {
       return json({ ok: true, order, alreadyDone: true }, 200, origin);
     }
@@ -883,6 +931,7 @@ async function getOrderById(db, id) {
   order.operationsRevision=operations?.revision || 0;
   const events = await db.prepare("SELECT event_type, note, created_at FROM order_events WHERE order_id = ? ORDER BY id ASC").bind(id).all();
   order.events = events.results || [];
+  if (isApprovedLocalDelivery(order)) order.bankTransfer = bankTransferDetails(order);
   return order;
 }
 
@@ -943,16 +992,15 @@ async function safeDbUpdate(db, sql, params) {
   try { await db.prepare(sql).bind(...params).run(); } catch (error) { console.error("D1 update failed", error); }
 }
 
-function statusConfirmedEmailHtml(order) {
+function statusConfirmedEmailHtml(order, qrAttached = false) {
   const rows = customerOrderRows(order);
-  const paymentNotice = order.payment === LOCAL_PAYMENT_IPS
+  const paymentNotice = isBankLocalPayment(order)
     ? `<div style="margin-top:18px;padding:16px 18px;background:#eef5f8;border:1px solid #d9e7ec;border-radius:12px;color:#40545f;font-size:14px;line-height:1.6;">
-        <strong style="display:block;color:#10283d;margin-bottom:4px;">IPS plaćanje na račun</strong>
-        U prilogu je PNG slika NBS IPS QR koda za iznos <strong>${formatRsd(order.total)}</strong>. Skenirajte je drugim telefonom ili je sačuvajte pa uvezite iz galerije u aplikaciji svoje banke. Robu predajemo nakon provere evidentirane uplate.
+        <strong>Uplata na račun za besplatnu ličnu dostavu</strong>
+        ${qrAttached ? `<p>U prilogu je PNG slika NBS IPS QR koda. Skenirajte je ili je uvezite iz galerije u aplikaciji svoje banke.</p>` : order.payment === LOCAL_PAYMENT_IPS ? `<p>IPS QR trenutno nije dostupan. Uplatu izvršite običnim bankarskim transferom prema sledećim instrukcijama.</p>` : ""}
+        ${bankTransferEmailHtml(order)}
       </div>`
-    : order.payment === LOCAL_PAYMENT_CASH
-      ? `<div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">Lična dostava je besplatna. Plaćanje je <strong>gotovinom prilikom preuzimanja</strong>.</div>`
-      : `<div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">Obavestićemo vas čim pošiljku preuzme kurirska služba. Plaćanje ostaje <strong>pouzećem</strong>.</div>`;
+    : `<div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">Obavestićemo vas čim pošiljku preuzme kurirska služba. Plaćanje ostaje <strong>pouzećem</strong>.</div>`;
   return emailShell(`
     <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#b69a69;font-weight:700;">Porudžbina je potvrđena</div>
     <h1 style="font-size:25px;line-height:1.22;margin:8px 0 10px;color:#10283d;">Vaša porudžbina je potvrđena.</h1>
@@ -1017,6 +1065,7 @@ function localScheduleEmailHtml(order, schedule) {
       <strong style="color:#10283d;">Mesto:</strong> ${escapeHtml(schedule.location)}<br>
       <strong style="color:#10283d;">Plaćanje:</strong> ${escapeHtml(order.payment)}
     </div>
+    ${isBankLocalPayment(order) ? bankTransferEmailHtml(order) : ""}
     <p style="margin:20px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Ako je potrebna promena, odgovorite na ovaj email ili pozovite broj naveden u kontaktima prodavca.</p>
   `);
 }
@@ -1141,6 +1190,43 @@ function isApprovedLocalDelivery(order) {
     && (order.events || []).some(event => event.event_type === "local_delivery_approved");
 }
 
+function isBankLocalPayment(order) {
+  return [LOCAL_PAYMENT_IPS, LOCAL_PAYMENT_BANK].includes(order.payment);
+}
+
+function bankTransferDetails(order) {
+  const fields = ipsFields(order);
+  return { account: fields.R, payee: fields.N.replace(/\r?\n/g, ", "), amount: Number(order.total),
+    currency: "RSD", model: fields.RO.slice(0, 2), reference: fields.RO.slice(2), purpose: fields.S, paymentCode: fields.SF };
+}
+
+function bankTransferEmailHtml(order) {
+  const b = bankTransferDetails(order);
+  return `<div style="margin-top:14px;line-height:1.7;">${[
+    ["Primalac", b.payee], ["Račun", b.account], ["Iznos", formatRsd(b.amount)],
+    ["Šifra plaćanja", b.paymentCode], ["Model", b.model], ["Poziv na broj", b.reference], ["Svrha", b.purpose]
+  ].map(([label, value]) => `<div><strong>${label}:</strong> ${escapeHtml(value)}</div>`).join("")}
+  <p>Robu predajemo nakon provere evidentirane uplate na računu firme. Potvrda porudžbine ili generisanje QR koda ne znači da je uplata primljena.</p></div>`;
+}
+
+function hasVerifiedBankPayment(operations) {
+  return operations.paymentStatus === "paid" && operations.paymentMethod === "bank_transfer"
+    && Boolean(operations.paymentVerifiedAt && operations.remittanceDate && operations.paymentReference);
+}
+
+function verifiedBankPayment(order, body) {
+  if (hasVerifiedBankPayment(order.operations)
+      && (body.remittanceDate == null || body.remittanceDate === order.operations.remittanceDate)
+      && (body.paymentReference == null || body.paymentReference === order.operations.paymentReference)) return { ok: true, data: {} };
+  const remittanceDate = clean(body.remittanceDate, 10), paymentReference = clean(body.paymentReference, 160);
+  if (body.paymentConfirmed !== "yes") return { ok: false, error: "Prvo proverite uplatu na računu firme i potvrdite da je evidentirana." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(remittanceDate) || !Number.isFinite(Date.parse(remittanceDate))
+      || new Date(remittanceDate).toISOString().slice(0,10) !== remittanceDate || remittanceDate > belgradeDateKey() || !paymentReference) {
+    return { ok: false, error: "Unesite važeći datum uplate na račun i referencu sa bankarskog izvoda." };
+  }
+  return { ok: true, data: { remittanceDate, paymentReference, paymentMethod: "bank_transfer", paymentVerifiedAt: new Date().toISOString() } };
+}
+
 function ipsReference(orderId) {
   const digits = String(orderId || "").replace(/\D/g, "");
   if (digits) return `00${digits.slice(-18)}`;
@@ -1164,22 +1250,28 @@ function ipsFields(order) {
 }
 
 async function generateIpsQr(order) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IPS_TIMEOUT_MS);
   try {
     const response = await fetch(IPS_GENERATOR_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "image/png" },
+      signal: controller.signal,
       body: JSON.stringify(ipsFields(order))
     });
     const contentType = response.headers.get("Content-Type") || "";
-    if (!response.ok || !contentType.toLowerCase().includes("image")) {
+    if (!response.ok || !contentType.toLowerCase().includes("image/png")) {
       console.error("NBS IPS QR generation failed", response.status, await response.text().catch(() => ""));
       return { ok: false };
     }
-    return { ok: true, buffer: await response.arrayBuffer() };
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (bytes.length < 8 || ![137,80,78,71,13,10,26,10].every((value, i) => bytes[i] === value)) return { ok: false };
+    return { ok: true, buffer };
   } catch (error) {
     console.error("NBS IPS QR generation failed", error);
     return { ok: false };
-  }
+  } finally { clearTimeout(timeout); }
 }
 
 function safePdfFilename(name) {
@@ -1703,6 +1795,6 @@ function json(data, status = 200, origin = "", extraHeaders = {}) {
 function courierCsv(orders,batch) {
   const header=['Izvozni paket','Datum izvoza','Porudžbina','Ime','Prezime','Telefon','Email','Adresa','Poštanski broj','Mesto','Način isporuke','Roba RSD','Dostava RSD','Ukupno RSD','Pouzeće RSD'];
   const cell=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
-  const rows=orders.map(o=>[batch.id,batch.created_at,o.id,o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.delivery.method,o.goodsTotal,o.shipping,o.total,['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total]);
+  const rows=orders.map(o=>[batch.id,batch.created_at,o.id,o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.delivery.method,o.goodsTotal,o.shipping,o.total,isBankLocalPayment(o)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total]);
   return '\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n');
 }
