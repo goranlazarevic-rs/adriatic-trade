@@ -2,7 +2,7 @@
 
 Razvojna grana: `fix/local-delivery-bank-only`, Worker 4.7.1, [draft PR #8](https://github.com/goranlazarevic-rs/adriatic-trade/pull/8).
 
-Automatizovane i lokalne vizuelne provere su uspešne. Stvarna integracija sa bankarskom aplikacijom, Resend isporukom i Cloudflare testnim resursima još nije potvrđena. Ovaj rezultat nije odobrenje za produkciono puštanje; main, produkcioni Worker i podaci kupaca nisu menjani.
+Automatizovane i lokalne vizuelne provere su uspešne. Korisnik je potvrdio uvoz QR slike u bankarsku aplikaciju i podudaranje prikazanih podataka. Stvarna Resend isporuka i Cloudflare testni resursi još nisu provereni. Ovaj rezultat nije odobrenje za produkciono puštanje; main, produkcioni Worker i podaci kupaca nisu menjani.
 
 ## Rezultati
 
@@ -17,6 +17,7 @@ Automatizovane i lokalne vizuelne provere su uspešne. Stvarna integracija sa ba
 | PDF uz isporuku | Upload, čuvanje, ponovno prilaganje postojećeg PDF-a i download uspešni. Greška emaila briše samo novi prilog; povezani istorijski prilog ostaje. Nije korišćen stvarni fiskalni dokument kupca. |
 | NBS javni primer — stvarni servis | HTTP 200, `image/png`, 500 × 500; QR dekodiran i račun/iznos odgovaraju zvaničnom javnom primeru. Zahtev nije sadržao podatke Adriatic Trade. |
 | NBS Adriatic Trade — stvarni servis | Nakon izričitog odobrenja korisnika isključivo za test: HTTP 200, `image/png`, 500 × 500, 1.297 bajtova. QR dekodiran; svih devet polja odgovara zahtevu: račun/primalac, 598 RSD, šifra 289, model 00, poziv `20261010654321`, svrha za sintetičku porudžbinu `AT-20261010-654321`. Generisanje ne izvršava uplatu. |
+| Bankarska aplikacija — uvoz slike | Korisnik 10.10.2026. u 18:52 (Europe/Belgrade) potvrdio uvoz PNG slike i podudaranje prikazanog primaoca ADRIATIC TRADE DOO, računa `265201031001135831`, iznosa 598,00 RSD, modela 00 i poziva `20261010654321`. Ručna korisnička potvrda; naziv/verzija aplikacije nisu navedeni. Izvršenje uplate nije predmet testa. |
 | Worker i stvarni NBS odgovor | Vraćeni PNG prihvaćen kroz stvarni Worker kod i priložen bez izmene bajtova uhvaćenoj potvrdi u izolovanom okruženju. Porudžbina ostaje nenaplaćena; obične bankarske instrukcije su prisutne. |
 | Worker — stvarni NBS zahtev i rok | Zaseban direktan zahtev trajao je 5,901 s. Poziv stvarnog NBS-a kroz lokalni Worker kod prekinut je posle 5,002 s; potvrda ipak uspeva uz instrukcije bez QR-a, naplata ostaje `unpaid`. Ovo proverava stvarni prekid/fallback iz lokalnog okruženja, ne meri Cloudflare produkcionu latenciju. Resend i baza ostaju izolovani. |
 | Podaci Adriatic Trade — lokalno | Račun ima 18 cifara i ispravnu mod-97 kontrolu. QR lokalno kodiran i dekodiran bez razlike u sadržaju. Provera ne uključuje bankarsku aplikaciju ili uplatu. |
@@ -34,9 +35,8 @@ Testovi pregledača koriste stvarni repo kod uz SQLite adapter za D1, Map zamenu
 
 ## Preostalo pre produkcionog odobrenja
 
-1. Uvesti već generisani testni NBS QR u bankarsku aplikaciju bez izvršenja uplate i potvrditi prikazane podatke. Stvarni NBS poziv sa podacima firme sada je izvršen nakon korisnikovog odobrenja isključivo za test; ranija blokada slanja tih podataka je razrešena. Uvoz u bankarsku aplikaciju još nije testiran.
-2. Na odvojenom Cloudflare testnom Worker-u proveriti stvarne D1 transakcije, R2 prilog i Resend slanje na kontrolisani testni email, uključujući dostupnost oba javna PDF priloga. Takvo okruženje i pristupni podaci nisu obezbeđeni u ovoj sesiji. Ne slati testove kupcima.
-3. Potvrditi sa operaterom proveru izvoda i referencu, uz stvarni fiskalni PDF. Evidencija naplate je ručna; QR generisanje nije dokaz izvršene uplate.
+1. Na odvojenom Cloudflare testnom Worker-u proveriti stvarne D1 transakcije, R2 prilog i Resend slanje na kontrolisani testni email, uključujući dostupnost oba javna PDF priloga. Takvo okruženje i pristupni podaci nisu obezbeđeni u ovoj sesiji. Ne slati testove kupcima.
+2. Potvrditi sa operaterom proveru izvoda i referencu, uz stvarni fiskalni PDF. Evidencija naplate je ručna; QR generisanje i uvoz slike nisu dokaz izvršene uplate.
 
 Preostala arhitektonska granica: slanje emaila prethodi D1 transakciji. Proverena zaštita sprečava prepisivanje statusa/naplate, ali ako drugi administrator promeni porudžbinu tokom slanja, kupac može primiti email iako zahtev završi konfliktom 409. Nema transakcionog reda za emailove. Za probu i rad koristiti jednu aktivnu akciju nad istom porudžbinom i razrešiti svaki konflikt pregledom istorije; ne pretpostavljati da 409 opoziva već poslat email.
 
