@@ -31,7 +31,7 @@ for(const mode of ['error','throw','timeout','wrong-type','bad-png']) regression
   const h=harness(),id=await h.add();h.state.qr=mode;
   assert.equal((await h.call(id,'confirm',{})).status,200);
   const email=h.state.emails[0];assert.equal(email.attachments.length,2);assert.match(email.html,/IPS QR trenutno nije dostupan/);assert.match(email.html,/265201031001135831/);assert.doesNotMatch(email.html,/U prilogu je PNG/);
-  const o=await h.get(id);assert.equal(o.status,'confirmed');assert.equal(o.operations.paymentStatus,'unpaid');assert.equal(o.payment,ips);assert.match(o.events.at(-1).note,/bez QR priloga/);
+  const o=await h.get(id);assert.equal(o.status,'confirmed');assert.equal(o.operations.paymentStatus,'unpaid');assert.equal(o.payment,ips);assert.match(o.events.find(e=>e.event_type==='confirmed').note,/bez QR priloga/);
   assert.ok(h.state.timeoutMs.includes(5000));
 });
 regression('working IPS attaches QR and also supplies ordinary bank transfer instructions',async()=>{
@@ -39,9 +39,9 @@ regression('working IPS attaches QR and also supplies ordinary bank transfer ins
   const email=h.state.emails[0];assert.equal(email.attachments.length,3);assert.ok(email.attachments[2].filename.endsWith('.png'));assert.equal(email.attachments[2].content,Buffer.from(png).toString('base64'));assert.match(email.html,/U prilogu je PNG/);assert.match(email.html,/265201031001135831/);
   assert.equal((await h.call(id,'confirm',{})).status,200);assert.equal(h.state.emails.length,1);
 });
-regression('email failure keeps order unconfirmed even with QR fallback',async()=>{
+regression('email failure retains confirmation and pending job even with QR fallback',async()=>{
   const h=harness(),id=await h.add(),before=await h.get(id);h.state.qr='error';h.state.email='error';
-  assert.equal((await h.call(id,'confirm',{})).status,502);assert.deepEqual(await h.get(id),before);
+  const response=await h.call(id,'confirm',{});assert.equal(response.status,200);assert.equal((await response.json()).emailPending,true);const after=await h.get(id);assert.equal(after.status,'confirmed');assert.equal(after.operations.paymentStatus,'unpaid');assert.equal(after.notifications.length,1);assert.equal(h.sql.prepare('SELECT COUNT(*) AS n FROM notification_outbox').get().n,1);
 });
 regression('QR download outage exposes fallback message; instructions remain accessible',async()=>{
   const h=harness(),id=await h.add();h.state.qr='error';const r=await h.call(id,'ips-qr');assert.equal(r.status,502);assert.match((await r.json()).error,/uplatu na račun/);assert.ok((await h.get(id)).bankTransfer.account);
@@ -57,12 +57,12 @@ regression('legacy cash blocks confirmation, schedule, delivery and new paid ope
 regression('unpaid confirmed legacy cash converts explicitly, notifies buyer and preserves prior events',async()=>{
   const h=harness(),id=await h.add(undefined,{payment:cash,status:'confirmed'}),before=await h.get(id);
   assert.equal((await h.call(id,'local-payment',{method:'bank_transfer'})).status,200);
-  const after=await h.get(id);assert.equal(after.payment,bank);assert.deepEqual(after.events.slice(0,before.events.length),before.events);assert.match(after.events.at(-1).note,/gotovina →/);
+  const after=await h.get(id);assert.equal(after.payment,bank);assert.deepEqual(after.events.slice(0,before.events.length),before.events);assert.match(after.events.find(e=>e.event_type==='local_payment_changed').note,/gotovina →/);
   assert.equal(after.operations.paymentStatus,'unpaid');assert.match(h.state.emails[0].html,/265201031001135831/);assert.match(h.state.emails[0].subject,/Uputstvo/);
 });
-regression('failed amendment email leaves legacy cash and history untouched',async()=>{
+regression('failed amendment email persists bank change and queues customer instructions',async()=>{
   const h=harness(),id=await h.add(undefined,{payment:cash,status:'confirmed'}),before=await h.get(id);h.state.email='error';
-  assert.equal((await h.call(id,'local-payment',{method:'ips'})).status,502);assert.deepEqual(await h.get(id),before);
+  const response=await h.call(id,'local-payment',{method:'ips'});assert.equal(response.status,200);assert.equal((await response.json()).emailPending,true);const after=await h.get(id);assert.equal(after.payment,ips);assert.deepEqual(after.events.slice(0,before.events.length),before.events);assert.equal(after.notifications.length,1);
 });
 regression('completed legacy cash history is preserved and delivery retry does not create payment',async()=>{
   const h=harness(),id=await h.add(undefined,{payment:cash,status:'shipped',operations:{fulfillment:'delivered',paymentStatus:'paid',paymentReference:'istorijska gotovina'}}),before=await h.get(id);
@@ -75,7 +75,7 @@ regression('local delivery needs checked bank verification, valid date and state
   for(const body of [{},{paymentConfirmed:'yes'},{...proof,paymentConfirmed:'no'},{...proof,remittanceDate:'2099-01-01'},{...proof,remittanceDate:'2026-02-30'},{...proof,paymentReference:'  '}])assert.equal((await h.delivered(id,body)).status,409);
   assert.deepEqual(await h.get(id),before);assert.equal(h.state.emails.length,0);
   assert.equal((await h.delivered(id,proof)).status,200);
-  const after=await h.get(id);assert.equal(after.status,'shipped');assert.equal(after.courier,'Lična dostava');assert.equal(after.operations.fulfillment,'delivered');assert.equal(after.operations.paymentStatus,'paid');assert.equal(after.operations.paymentMethod,'bank_transfer');assert.ok(after.operations.paymentVerifiedAt);assert.equal(after.operations.paymentReference,proof.paymentReference);assert.equal(after.total,598);assert.deepEqual(after.items,before.items);assert.match(after.events.at(-1).note,/IZVOD-42/);
+  const after=await h.get(id);assert.equal(after.status,'shipped');assert.equal(after.courier,'Lična dostava');assert.equal(after.operations.fulfillment,'delivered');assert.equal(after.operations.paymentStatus,'paid');assert.equal(after.operations.paymentMethod,'bank_transfer');assert.ok(after.operations.paymentVerifiedAt);assert.equal(after.operations.paymentReference,proof.paymentReference);assert.equal(after.total,598);assert.deepEqual(after.items,before.items);assert.match(after.events.find(e=>e.event_type==='local_delivery_delivered').note,/IZVOD-42/);
   const eventCount=after.events.length;assert.equal((await h.delivered(id,proof)).status,200);assert.equal((await h.get(id)).events.length,eventCount);
 });
 regression('operations cannot mark local paid without bank evidence or before confirmation',async()=>{
@@ -121,12 +121,12 @@ regression('courier COD stays 420 RSD with ordinary confirmation and no NBS call
 });
 regression('payment conversion detects concurrent paid operation and does not overwrite it',async()=>{
   const h=harness(),id=await h.add(undefined,{payment:cash,status:'confirmed'});
-  h.state.onEmail=()=>h.sql.prepare('UPDATE order_operations SET revision=revision+1,data_json=? WHERE order_id=?').run(JSON.stringify({paymentStatus:'paid'}),id);
+  h.state.onCommit=()=>h.sql.prepare('UPDATE order_operations SET revision=revision+1,data_json=? WHERE order_id=?').run(JSON.stringify({paymentStatus:'paid'}),id);
   assert.equal((await h.call(id,'local-payment',{method:'bank_transfer'})).status,409);const o=await h.get(id);assert.equal(o.payment,cash);assert.equal(o.operations.paymentStatus,'paid');assert.equal(o.events.filter(x=>x.event_type==='local_payment_changed').length,0);
 });
-regression('delivery detects concurrent cancellation and never records bank payment over it',async()=>{
+regression('delivery detects cancellation before transaction and never records bank payment over it',async()=>{
   const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}});
-  h.state.onEmail=()=>h.sql.prepare("UPDATE orders SET status='cancelled' WHERE id=?").run(id);
+  h.state.onCommit=()=>h.sql.prepare("UPDATE orders SET status='cancelled' WHERE id=?").run(id);
   assert.equal((await h.delivered(id,proof)).status,409);const o=await h.get(id);assert.equal(o.status,'cancelled');assert.equal(o.operations.paymentStatus,'unpaid');assert.equal(o.events.filter(x=>x.event_type==='local_delivery_delivered').length,0);
 });
 
@@ -166,12 +166,12 @@ regression('previously linked PDF is actually reattached, not merely promised in
   h.sql.prepare('UPDATE orders SET receipt_key=?,receipt_filename=? WHERE id=?').run('existing.pdf','existing.pdf',id);
   assert.equal((await h.delivered(id,proof)).status,200);assert.equal(h.state.emails.at(-1).attachments[0].filename,'existing.pdf');assert.equal(h.state.emails.at(-1).attachments[0].content,Buffer.from(pdfBytes).toString('base64'));assert.ok(h.receiptFiles.has('existing.pdf'));
 });
-regression('failure to email new PDF rolls back new file; existing PDF is never deleted',async()=>{
+regression('email outage preserves saved delivery and its PDF for a durable retry',async()=>{
   for(const saved of [false,true]){
     const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}});
     if(saved){await h.receipts.put('existing.pdf',pdfBytes,{});h.sql.prepare('UPDATE orders SET receipt_key=?,receipt_filename=? WHERE id=?').run('existing.pdf','existing.pdf',id);}
     const before=await h.get(id);h.state.email='error';
-    assert.equal((await h.delivered(id,{...proof,...(saved?{}:{receipt:pdfFile()})})).status,502);assert.deepEqual(await h.get(id),before);assert.equal(h.receiptFiles.size,saved?1:0);
+    const response=await h.delivered(id,{...proof,...(saved?{}:{receipt:pdfFile()})});assert.equal(response.status,200);assert.equal((await response.json()).emailPending,true);const after=await h.get(id);assert.equal(after.operations.fulfillment,'delivered');assert.equal(after.notifications.length,1);assert.equal(h.receiptFiles.size,1);h.state.email='ok';assert.equal((await h.call(id,'email-retry',{})).status,200);assert.equal((await h.get(id)).notifications.length,0);assert.equal(h.state.emails.at(-1).attachments.length,1);
   }
 });
 regression('missing linked PDF blocks false attachment notice and payment recording',async()=>{
@@ -194,16 +194,16 @@ regression('schedule rejects invalid dates and assigns a new email key when plac
  assert.equal((await h.call(id,'local-schedule',{...schedule,location:'Drugo mesto'})).status,200);
  assert.notEqual(h.state.emailKeys[0],h.state.emailKeys[1]);assert.equal((await h.get(id)).operations.localDelivery.location,'Drugo mesto');
 });
-regression('schedule cannot overwrite payment recorded while notification is in flight',async()=>{
+regression('schedule cannot overwrite payment recorded before schedule transaction',async()=>{
  const h=harness(),id=await h.add(undefined,{status:'confirmed'});
- h.state.onEmail=()=>h.sql.prepare('UPDATE order_operations SET revision=revision+1,data_json=? WHERE order_id=?').run(JSON.stringify({paymentStatus:'paid',paymentMethod:'bank_transfer',paymentReference:'NOVA UPLATA'}),id);
+ h.state.onCommit=()=>h.sql.prepare('UPDATE order_operations SET revision=revision+1,data_json=? WHERE order_id=?').run(JSON.stringify({paymentStatus:'paid',paymentMethod:'bank_transfer',paymentReference:'NOVA UPLATA'}),id);
  assert.equal((await h.call(id,'local-schedule',schedule)).status,409);
  const o=await h.get(id);assert.equal(o.operations.paymentStatus,'paid');assert.equal(o.operations.paymentReference,'NOVA UPLATA');assert.equal(o.events.filter(x=>x.event_type==='local_delivery_scheduled').length,0);
 });
 regression('confirmation cannot revive a rejected order or overwrite a concurrent payment choice',async()=>{
  for(const change of ['rejected','bank']){
   const h=harness(),id=await h.add();
-  h.state.onEmail=()=>change==='rejected'?h.sql.prepare("UPDATE orders SET status='rejected' WHERE id=?").run(id):h.sql.prepare('UPDATE orders SET payment=? WHERE id=?').run(bank,id);
+  h.state.onCommit=()=>change==='rejected'?h.sql.prepare("UPDATE orders SET status='rejected' WHERE id=?").run(id):h.sql.prepare('UPDATE orders SET payment=? WHERE id=?').run(bank,id);
   assert.equal((await h.call(id,'confirm',{})).status,409);
   const o=await h.get(id);assert.equal(o.status,change==='rejected'?'rejected':'new');assert.equal(o.events.filter(x=>x.event_type==='confirmed').length,0);if(change==='bank')assert.equal(o.payment,bank);
  }

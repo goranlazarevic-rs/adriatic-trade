@@ -47,7 +47,15 @@ try{
     await page.locator('[data-local-payment="bank_transfer"]').click();
     await page.locator('[data-local-payment="bank_transfer"][disabled]').waitFor();
    }
+   if(mode.startsWith('bank'))h.state.email='error';
    await page.locator('[data-confirm]').click();await page.locator('[data-local-schedule-form]').waitFor();
+   if(mode.startsWith('bank')){
+    assert.equal((await h.get(id)).status,'confirmed');
+    await page.getByText('Slanje emaila nije potvrđeno.',{exact:true}).waitFor();
+    const firstKey=h.state.emailKeys[0];h.state.email='ok';await page.locator('[data-email-retry]').click();
+    await page.locator('[data-email-retry]').waitFor({state:'detached'});
+    assert.equal(h.state.emailKeys[1],firstKey);assert.equal((await h.get(id)).notifications.length,0);
+   }
    assert.equal((await h.get(id)).status,'confirmed');assert.equal((await h.get(id)).operations.paymentStatus,'unpaid');
    const confirmation=h.state.emails[0];assert.equal(confirmation.attachments.length,2);assert.match(confirmation.html,/265201031001135831/);assert.match(confirmation.html,/Poziv na broj/);assert.doesNotMatch(confirmation.html,/U prilogu je PNG/);
    const scheduled=page.locator('[data-local-schedule-form]');

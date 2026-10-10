@@ -20,9 +20,10 @@ export function harness() {
     const stmt = sql.prepare(query); let args = [];
     return { bind(...values) { args=values; return this; }, async run() { return {meta:{changes:Number(stmt.run(...args).changes)}}; },
       async first() {return stmt.get(...args)||null;}, async all() {return {results:stmt.all(...args)};} };
-  }, async batch(stmts) {sql.exec('BEGIN');try {const r=[];for(const s of stmts)r.push(await s.run());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}} };
-  const state={qr:'ok',email:'ok',emails:[],emailKeys:[],qrRequests:[],timeoutMs:[],onEmail:null};
+  }, async batch(stmts) {if(state.onCommit){const hook=state.onCommit;state.onCommit=null;hook();}sql.exec('BEGIN');try {const r=[];for(const s of stmts)r.push(await s.run());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}} };
+  const state={qr:'ok',email:'ok',emails:[],emailKeys:[],qrRequests:[],timeoutMs:[],onEmail:null,onCommit:null,turnstile:{success:true,action:'checkout_order',hostname:'adriatictrade.rs'}};
   const fetch=async (url, options) => {
+    if(url==='https://challenges.cloudflare.com/turnstile/v0/siteverify')return new Response(JSON.stringify(state.turnstile),{headers:{'Content-Type':'application/json'}});
     if (url.startsWith('https://nbs.rs/')) {
       state.qrRequests.push(JSON.parse(options.body));
       if (state.qr==='error') return new Response('unavailable', {status:503});
@@ -41,7 +42,7 @@ export function harness() {
   };
   const receiptFiles=new Map();
   const receipts={async put(key,buffer,metadata){receiptFiles.set(key,{buffer,metadata});},async delete(key){receiptFiles.delete(key);},async get(key){const file=receiptFiles.get(key);return file?{async arrayBuffer(){return file.buffer;},body:file.buffer,httpMetadata:file.metadata?.httpMetadata}:null;}};
-  const ctx=vm.createContext({Request,Response,Headers,URL,FormData,console:{error(){}},Intl,Date,crypto,TextEncoder,AbortController,btoa,fetch,
+  const ctx=vm.createContext({Request,Response,Headers,URL,FormData,console:{error(){},warn(){},log(){}},Intl,Date,crypto,TextEncoder,AbortController,btoa,fetch,
     setTimeout(fn,ms){state.timeoutMs.push(ms);return setTimeout(fn,state.qr==='timeout'?5:ms);},clearTimeout});
   vm.runInContext(source,ctx);ctx.env={DB:db,RECEIPTS:receipts,ADMIN_TOKEN:'synthetic-admin-token-for-tests-only',RESEND_API_KEY:'synthetic'};
   vm.runInContext('globalThis.run=request=>worker.fetch(request,env);globalThis.insert=order=>insertOrder(env.DB,order);',ctx);

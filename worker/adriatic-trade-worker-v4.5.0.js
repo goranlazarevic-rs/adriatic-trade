@@ -101,6 +101,9 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(flushNotificationOutbox(env).catch(error => console.error("Email retry failed", error.message)));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
@@ -114,7 +117,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.7.1",
+        version: "4.7.2",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -324,6 +327,7 @@ async function handleCreateOrder(request, env, origin) {
 }
 
 async function handleAdmin(request, env, url, origin) {
+  await ensureNotificationSchema(env.DB);
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS order_operations (
     order_id TEXT PRIMARY KEY, data_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 0
   )`).run();
@@ -413,13 +417,19 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
   const action = match[2] || "";
   const order = await getOrderById(env.DB, orderId);
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
+
+  if (request.method === "POST" && action === "email-retry") {
+    await env.DB.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, attempts=0 WHERE order_id=? AND status='attention' AND (first_attempt_at IS NULL OR first_attempt_at>?)")
+      .bind(Date.now(), order.id, Date.now()-23*60*60*1000).run();
+    return notificationResponse(env, order.id, origin);
+  }
 
   if (request.method === "POST" && action === "local-delivery") {
     if (order.status !== "new") {
@@ -432,12 +442,13 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Dostava je već besplatna." }, 409, origin);
     }
     const now = new Date().toISOString();
-    const result = await env.DB.prepare("UPDATE orders SET shipping = 0, total = goods_total, payment = ?, updated_at = ? WHERE id = ? AND status = 'new' AND shipping > 0")
-      .bind(LOCAL_PAYMENT_IPS, now, order.id).run();
-    if (!Number(result.meta?.changes || 0)) {
-      return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
-    }
-    await addOrderEvent(env.DB, order.id, "local_delivery_approved", "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu, a IPS plaćanje je izabrano kao podrazumevano.");
+    const results = await env.DB.batch([
+      env.DB.prepare("UPDATE orders SET shipping = 0, total = goods_total, payment = ?, updated_at = ? WHERE id = ? AND status = 'new' AND shipping > 0")
+        .bind(LOCAL_PAYMENT_IPS, now, order.id),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_approved', ?, ? WHERE changes()=1")
+        .bind(order.id, "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu, a IPS plaćanje je izabrano kao podrazumevano.", now)
+    ]);
+    if (!results[0].meta.changes) return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
     return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
   }
 
@@ -450,26 +461,22 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Lična dostava se plaća isključivo na račun, IPS QR kodom ili bankarskim transferom." }, 400, origin);
     }
     const payment = body.method === "ips" ? LOCAL_PAYMENT_IPS : LOCAL_PAYMENT_BANK;
-    if (payment === order.payment) return json({ ok: true, order, alreadyDone: true }, 200, origin);
-    // Previously confirmed cash orders require explicit conversion and new customer instructions.
-    if (order.status === "confirmed") {
-      if (!env.RESEND_API_KEY) return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
-      const result = await sendEmail(env.RESEND_API_KEY, {
-        from: FROM_EMAIL, to: [order.customer.email], reply_to: BUSINESS_EMAIL,
-        subject: `Uputstvo za uplatu na račun — ${order.id}`,
-        html: emailShell(`<h1>Uplata za ličnu dostavu</h1><p>Za porudžbinu ${escapeHtml(order.id)} način plaćanja je promenjen u: ${escapeHtml(payment)}.</p>${bankTransferEmailHtml(order)}`)
-      }, `local-payment/${order.id}/${order.operationsRevision}/${body.method}`);
-      if (!result.ok) return json({ ok: false, error: "Email sa instrukcijama nije poslat. Način plaćanja nije promenjen." }, 502, origin);
-    }
+    if (payment === order.payment) return notificationResponse(env, order.id, origin, true);
+    const payload = order.status === "confirmed" ? {
+      from: FROM_EMAIL, to: [order.customer.email], reply_to: BUSINESS_EMAIL,
+      subject: `Uputstvo za uplatu na račun — ${order.id}`,
+      html: emailShell(`<h1>Uplata za ličnu dostavu</h1><p>Za porudžbinu ${escapeHtml(order.id)} način plaćanja je promenjen u: ${escapeHtml(payment)}.</p>${bankTransferEmailHtml(order)}`)
+    } : null;
+    if (payload && !env.RESEND_API_KEY) return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
     const now = new Date().toISOString();
-    const results = await env.DB.batch([
+    const results = await commitNotification(env, order.id, [
       env.DB.prepare("UPDATE orders SET payment = ?, updated_at = ? WHERE id = ? AND status = ? AND payment = ? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)")
         .bind(payment, now, order.id, order.status, order.payment, order.operationsRevision),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_payment_changed', ?, ? WHERE changes()=1")
-        .bind(order.id, `Administrator (zajednički ključ) · Plaćanje: ${order.payment} → ${payment}.` + (order.status === "confirmed" ? " Kupcu su poslate instrukcije za uplatu." : ""), now)
-    ]);
+        .bind(order.id, `Administrator (zajednički ključ) · Plaćanje: ${order.payment} → ${payment}.` + (order.status === "confirmed" ? " Instrukcije za uplatu su sačuvane za slanje." : ""), now)
+    ], payload);
     if (!results[0].meta.changes) return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    return notificationResponse(env, order.id, origin);
   }
 
   if (request.method === "GET" && action === "ips-qr") {
@@ -503,7 +510,12 @@ async function handleAdmin(request, env, url, origin) {
     if (!timeWindow) return json({ ok: false, error: "Unesite dogovoreno vreme ili vremenski okvir." }, 400, origin);
     if (!location) return json({ ok: false, error: "Unesite dogovoreno mesto isporuke." }, 400, origin);
 
-    const sendResult = await sendEmail(env.RESEND_API_KEY, {
+    const previousSchedule = order.operations.localDelivery;
+    if (previousSchedule && previousSchedule.date === date && previousSchedule.timeWindow === timeWindow && previousSchedule.location === location) {
+      return notificationResponse(env, order.id, origin, true);
+    }
+    if (!env.RESEND_API_KEY) return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
+    const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
@@ -513,27 +525,26 @@ async function handleAdmin(request, env, url, origin) {
         { name: "category", value: "local_delivery_scheduled" },
         { name: "order_id", value: order.id }
       ]
-    }, `local-schedule/${order.id}/${order.operationsRevision}/${await securityHash(JSON.stringify({date,timeWindow,location}))}`);
-    if (!sendResult.ok) return json({ ok: false, error: "Email kupcu nije poslat. Termin nije sačuvan." }, 502, origin);
-
+    };
     const current = order.operations || {};
     const now = new Date().toISOString();
-    const next = { ...current, localDelivery: { date, timeWindow, location, notifiedAt: now, deliveredAt: current.localDelivery?.deliveredAt || "" } };
-    const results = await env.DB.batch([
+    const next = { ...current, localDelivery: { date, timeWindow, location, scheduledAt: now, notifiedAt: "", deliveredAt: current.localDelivery?.deliveredAt || "" } };
+    const results = await commitNotification(env, order.id, [
       env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=? AND revision=? AND EXISTS(SELECT 1 FROM orders WHERE id=order_operations.order_id AND status='confirmed' AND payment=?)")
         .bind(JSON.stringify(next), order.id, order.operationsRevision, order.payment),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_scheduled', ?, ? WHERE changes()=1")
-        .bind(order.id, `Administrator (zajednički ključ) · Termin lične isporuke: ${date}, ${timeWindow}; mesto: ${location}. Kupac je obavešten.`, now)
-    ]);
+        .bind(order.id, `Administrator (zajednički ključ) · Termin lične isporuke: ${date}, ${timeWindow}; mesto: ${location}. Email je sačuvan za slanje.`, now)
+    ], payload, { schedule: { date, timeWindow, location } });
     if (!results[0].meta.changes) return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    return notificationResponse(env, order.id, origin);
   }
 
   if (request.method === "POST" && action === "local-delivered") {
-    if (order.status === "shipped" && order.operations?.fulfillment === "delivered") return json({ ok: true, order, alreadyDone: true }, 200, origin);
+    if (order.status === "shipped" && order.operations?.fulfillment === "delivered") return notificationResponse(env, order.id, origin, true);
     if (order.status !== "confirmed" || !isApprovedLocalDelivery(order) || !order.operations?.localDelivery?.date) {
       return json({ ok: false, error: "Prvo potvrdite i zakažite ličnu dostavu." }, 409, origin);
     }
+    if (!env.RESEND_API_KEY) return json({ ok: false, error: "Resend API ključ nije podešen." }, 503, origin);
     const contentType = request.headers.get("Content-Type") || "";
     if (!contentType.includes("multipart/form-data")) return json({ ok: false, error: "Očekivan je formular za završetak isporuke." }, 415, origin);
     let form; try { form = await request.formData(); } catch { return json({ ok: false, error: "Neispravan formular." }, 400, origin); }
@@ -560,7 +571,7 @@ async function handleAdmin(request, env, url, origin) {
       if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) return json({ ok: false, error: "Dokument nema ispravan PDF format." }, 400, origin);
       if (!env.RECEIPTS) return json({ ok: false, error: "R2 skladište za fiskalne račune nije povezano." }, 503, origin);
       receiptFilename = filename;
-      receiptKey = `fiscal/${order.id}/${Date.now()}-${filename}`;
+      receiptKey = `fiscal/${order.id}/${crypto.randomUUID()}-${filename}`;
       await env.RECEIPTS.put(receiptKey, buffer, { httpMetadata: { contentType: "application/pdf", contentDisposition: `attachment; filename="${sanitizeHeaderFilename(filename)}"` }, customMetadata: { orderId: order.id } });
       receiptUploaded = true;
       attachment = { filename, content: arrayBufferToBase64(buffer) };
@@ -580,25 +591,23 @@ async function handleAdmin(request, env, url, origin) {
       html: localDeliveredEmailHtml(order, Boolean(attachment || receiptKey)),
       tags: [{ name: "category", value: "local_delivery_delivered" }, { name: "order_id", value: order.id }]
     };
-    if (attachment) payload.attachments = [attachment];
-    const sendResult = await sendEmail(env.RESEND_API_KEY, payload, `local-delivered/${order.id}`);
-    if (!sendResult.ok) {
-      if (receiptUploaded && env.RECEIPTS) await env.RECEIPTS.delete(receiptKey).catch(() => {});
-      return json({ ok: false, error: "Email kupcu nije poslat. Status nije promenjen." }, 502, origin);
-    }
+    if (attachment) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
 
     const now = new Date().toISOString();
     const next = { ...order.operations, ...verification.data, fulfillment: "delivered", paymentStatus: "paid", localDelivery: { ...order.operations.localDelivery, deliveredAt: now } };
-    const results = await env.DB.batch([
+    const results = await commitNotification(env, order.id, [
       env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed' AND payment=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)`).bind(now, now, receiptKey || null, receiptFilename || null, order.id, order.payment, order.operationsRevision),
       env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=? AND revision=? AND changes()=1").bind(JSON.stringify(next), order.id, order.operationsRevision),
-      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_delivered', ?, ? WHERE changes()=1").bind(order.id, `Administrator (zajednički ključ) · Lična isporuka završena. Uplata na račun proverena: ${next.remittanceDate}; referenca: ${next.paymentReference}. Kupac je obavešten.`, now)
-    ]);
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_delivered', ?, ? WHERE changes()=1").bind(order.id, `Administrator (zajednički ključ) · Lična isporuka završena. Uplata na račun proverena: ${next.remittanceDate}; referenca: ${next.paymentReference}. Email je sačuvan za slanje.`, now)
+    ], payload).catch(async error => {
+      if (receiptUploaded) await env.RECEIPTS.delete(receiptKey).catch(() => {});
+      throw error;
+    });
     if (!results[0].meta.changes) {
       if (receiptUploaded && env.RECEIPTS) await env.RECEIPTS.delete(receiptKey).catch(() => {});
       return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
     }
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    return notificationResponse(env, order.id, origin);
   }
 
   if (request.method === "POST" && action === "operations") {
@@ -681,7 +690,7 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Otkazana porudžbina ne može biti potvrđena." }, 409, origin);
     }
     if (order.status === "confirmed") {
-      return json({ ok: true, order, alreadyDone: true }, 200, origin);
+      return notificationResponse(env, order.id, origin, true);
     }
 
     const attachments = [
@@ -700,7 +709,7 @@ async function handleAdmin(request, env, url, origin) {
       }
     }
 
-    const sendResult = await sendEmail(env.RESEND_API_KEY, {
+    const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
@@ -711,28 +720,23 @@ async function handleAdmin(request, env, url, origin) {
         { name: "category", value: "order_confirmed" },
         { name: "order_id", value: order.id }
       ]
-    }, `status-confirmed/${order.id}`);
-
-    if (!sendResult.ok) {
-      console.error("Confirmation status email failed", sendResult.status, sendResult.data);
-      return json({ ok: false, error: "Email kupcu nije poslat. Status nije promenjen." }, 502, origin);
-    }
+    };
 
     const now = new Date().toISOString();
-    const confirmationNote = "Administrator (zajednički ključ) · Porudžbina je potvrđena i kupac je obavešten." + (isBankLocalPayment(order) ? (qrAttached ? " IPS QR i instrukcije za uplatu su poslati." : " Poslate su instrukcije za bankarski transfer bez QR priloga.") : "");
-    const results = await env.DB.batch([
+    const confirmationNote = "Administrator (zajednički ključ) · Porudžbina je potvrđena i email je sačuvan za slanje." + (isBankLocalPayment(order) ? (qrAttached ? " IPS QR i instrukcije za uplatu su pripremljeni." : " Pripremljene su instrukcije za bankarski transfer bez QR priloga.") : "");
+    const results = await commitNotification(env, order.id, [
       env.DB.prepare("UPDATE orders SET status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ? AND status='new' AND payment=? AND total=?")
         .bind(now, now, order.id, order.payment, order.total),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'confirmed', ?, ? WHERE changes()=1")
         .bind(order.id, confirmationNote, now)
-    ]);
+    ], payload);
     if (!results[0].meta.changes) return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    return notificationResponse(env, order.id, origin);
   }
 
   if (request.method === "POST" && action === "reject") {
     if (order.status === "rejected") {
-      return json({ ok: true, order, alreadyDone: true }, 200, origin);
+      return notificationResponse(env, order.id, origin, true);
     }
     if (order.status !== "new") {
       return json({ ok: false, error: "Samo nova porudžbina može biti odbijena." }, 409, origin);
@@ -741,7 +745,7 @@ async function handleAdmin(request, env, url, origin) {
     const decision = await readDecisionReason(request);
     if (!decision.ok) return json({ ok: false, error: decision.error }, 400, origin);
 
-    const sendResult = await sendEmail(env.RESEND_API_KEY, {
+    const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
@@ -751,23 +755,21 @@ async function handleAdmin(request, env, url, origin) {
         { name: "category", value: "order_rejected" },
         { name: "order_id", value: order.id }
       ]
-    }, `status-rejected/${order.id}`);
-
-    if (!sendResult.ok) {
-      console.error("Rejected status email failed", sendResult.status, sendResult.data);
-      return json({ ok: false, error: "Email kupcu nije poslat. Status nije promenjen." }, 502, origin);
-    }
-
+    };
     const now = new Date().toISOString();
-    await env.DB.prepare("UPDATE orders SET status = 'rejected', updated_at = ? WHERE id = ?")
-      .bind(now, order.id).run();
-    await addOrderEvent(env.DB, order.id, "rejected", decisionEventNote("Porudžbina je odbijena", decision.data));
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    const results = await commitNotification(env, order.id, [
+      env.DB.prepare("UPDATE orders SET status=?, updated_at=? WHERE id=? AND status=? AND payment=? AND total=?")
+        .bind("rejected", now, order.id, "new", order.payment, order.total),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, ?, ?, ? WHERE changes()=1")
+        .bind(order.id, "rejected", decisionEventNote("Porudžbina je odbijena", decision.data), now)
+    ], payload);
+    if (!results[0].meta.changes) return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
+    return notificationResponse(env, order.id, origin);
   }
 
   if (request.method === "POST" && action === "cancel") {
     if (order.status === "cancelled") {
-      return json({ ok: true, order, alreadyDone: true }, 200, origin);
+      return notificationResponse(env, order.id, origin, true);
     }
     if (order.status === "shipped") {
       return json({ ok: false, error: "Poslata porudžbina ne može biti otkazana iz ovog panela." }, 409, origin);
@@ -779,7 +781,7 @@ async function handleAdmin(request, env, url, origin) {
     const decision = await readDecisionReason(request);
     if (!decision.ok) return json({ ok: false, error: decision.error }, 400, origin);
 
-    const sendResult = await sendEmail(env.RESEND_API_KEY, {
+    const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
@@ -789,24 +791,22 @@ async function handleAdmin(request, env, url, origin) {
         { name: "category", value: "order_cancelled" },
         { name: "order_id", value: order.id }
       ]
-    }, `status-cancelled/${order.id}`);
-
-    if (!sendResult.ok) {
-      console.error("Cancelled status email failed", sendResult.status, sendResult.data);
-      return json({ ok: false, error: "Email kupcu nije poslat. Status nije promenjen." }, 502, origin);
-    }
-
+    };
     const now = new Date().toISOString();
-    await env.DB.prepare("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ?")
-      .bind(now, order.id).run();
-    await addOrderEvent(env.DB, order.id, "cancelled", decisionEventNote("Porudžbina je otkazana", decision.data));
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    const results = await commitNotification(env, order.id, [
+      env.DB.prepare("UPDATE orders SET status=?, updated_at=? WHERE id=? AND status=? AND payment=? AND total=?")
+        .bind("cancelled", now, order.id, "confirmed", order.payment, order.total),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, ?, ?, ? WHERE changes()=1")
+        .bind(order.id, "cancelled", decisionEventNote("Porudžbina je otkazana", decision.data), now)
+    ], payload);
+    if (!results[0].meta.changes) return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
+    return notificationResponse(env, order.id, origin);
   }
 
   if (request.method === "POST" && action === "ship") {
     if (isApprovedLocalDelivery(order)) return json({ ok: false, error: "Lična dostava se završava kroz proveru uplate i ličnu isporuku." }, 409, origin);
     if (order.status === "shipped") {
-      return json({ ok: true, order, alreadyDone: true }, 200, origin);
+      return notificationResponse(env, order.id, origin, true);
     }
     if (order.status !== "confirmed") {
       return json({ ok: false, error: "Prvo potvrdite porudžbinu." }, 409, origin);
@@ -836,6 +836,7 @@ async function handleAdmin(request, env, url, origin) {
     }
 
     let attachment = null;
+    let receiptUploaded = false;
     let receiptKey = order.receiptKey || "";
     let receiptFilename = order.receiptFilename || "";
 
@@ -855,7 +856,7 @@ async function handleAdmin(request, env, url, origin) {
       }
 
       receiptFilename = filename;
-      receiptKey = `fiscal/${order.id}/${Date.now()}-${filename}`;
+      receiptKey = `fiscal/${order.id}/${crypto.randomUUID()}-${filename}`;
       if (!env.RECEIPTS) {
         return json({ ok: false, error: "R2 skladište za fiskalne račune nije povezano." }, 503, origin);
       }
@@ -866,9 +867,16 @@ async function handleAdmin(request, env, url, origin) {
         },
         customMetadata: { orderId: order.id }
       });
+      receiptUploaded = true;
       attachment = { filename, content: arrayBufferToBase64(buffer) };
     }
 
+    if (!attachment && receiptKey) {
+      if (!env.RECEIPTS) return json({ ok: false, error: "R2 skladište nije povezano." }, 503, origin);
+      const saved = await env.RECEIPTS.get(receiptKey);
+      if (!saved) return json({ ok: false, error: "Povezani fiskalni račun nije pronađen." }, 409, origin);
+      attachment = { filename: receiptFilename };
+    }
     const shippedHtml = statusShippedEmailHtml(order, { courier, trackingNumber, trackingUrl, hasReceipt: Boolean(attachment || receiptKey) });
     const payload = {
       from: FROM_EMAIL,
@@ -881,25 +889,129 @@ async function handleAdmin(request, env, url, origin) {
         { name: "order_id", value: order.id }
       ]
     };
-    if (attachment) payload.attachments = [attachment];
-
-    const sendResult = await sendEmail(env.RESEND_API_KEY, payload, `status-shipped/${order.id}`);
-    if (!sendResult.ok) {
-      console.error("Shipped status email failed", sendResult.status, sendResult.data);
-      if (attachment && env.RECEIPTS) await env.RECEIPTS.delete(receiptKey).catch(() => {});
-      return json({ ok: false, error: "Email kupcu nije poslat. Status nije promenjen." }, 502, origin);
-    }
-
+    if (attachment) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
     const now = new Date().toISOString();
-    await env.DB.prepare(`UPDATE orders
-      SET status = 'shipped', shipped_at = ?, updated_at = ?, courier = ?, tracking_number = ?, tracking_url = ?, receipt_key = ?, receipt_filename = ?
-      WHERE id = ?`)
-      .bind(now, now, courier, trackingNumber, trackingUrl || null, receiptKey || null, receiptFilename || null, order.id).run();
-    await addOrderEvent(env.DB, order.id, "shipped", `Porudžbina je poslata: ${courier}, broj pošiljke ${trackingNumber}.`);
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    const results = await commitNotification(env, order.id, [
+      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier=?, tracking_number=?, tracking_url=?, receipt_key=?, receipt_filename=?
+        WHERE id=? AND status='confirmed' AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved')`)
+        .bind(now, now, courier, trackingNumber, trackingUrl || null, receiptKey || null, receiptFilename || null, order.id),
+      env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'shipped', ?, ? WHERE changes()=1")
+        .bind(order.id, `Porudžbina je poslata: ${courier}, broj pošiljke ${trackingNumber}. Email je sačuvan za slanje.`, now)
+    ], payload).catch(async error => {
+      if (receiptUploaded) await env.RECEIPTS.delete(receiptKey).catch(() => {});
+      throw error;
+    });
+    if (!results[0].meta.changes) {
+      if (receiptUploaded) await env.RECEIPTS.delete(receiptKey).catch(() => {});
+      return json({ ok: false, error: "Podaci su promenjeni. Osvežite porudžbinu." }, 409, origin);
+    }
+    return notificationResponse(env, order.id, origin);
   }
 
   return json({ ok: false, error: "Method not allowed" }, 405, origin);
+}
+
+async function ensureNotificationSchema(db) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS notification_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, operation_key TEXT NOT NULL UNIQUE,
+    order_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', payload_json TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}', attempts INTEGER NOT NULL DEFAULT 0,
+    first_attempt_at INTEGER, next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+    created_at TEXT NOT NULL, sent_at TEXT
+  )`).run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_notification_due ON notification_outbox(status,next_attempt_at)').run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_notification_order ON notification_outbox(order_id,id)').run();
+}
+
+// State, audit event and notification snapshot commit in the same D1 transaction.
+// Caller statements propagate changes()=1, so a conflict never queues an email.
+async function commitNotification(env, orderId, statements, payload, metadata = {}) {
+  if (payload) {
+    statements.push(env.DB.prepare(`INSERT INTO notification_outbox(operation_key,order_id,payload_json,metadata_json,created_at)
+      SELECT ?,?,?,?,? WHERE changes()=1`).bind(`admin-email/${crypto.randomUUID()}`, orderId,
+      JSON.stringify(payload), JSON.stringify(metadata), new Date().toISOString()));
+  }
+  return env.DB.batch(statements);
+}
+
+async function notificationResponse(env, orderId, origin, alreadyDone = false) {
+  // A delivery outage is distinct from a saved order change. Never ask the operator
+  // to repeat the state change or delete a persisted receipt after a send failure.
+  try { await flushNotificationOutbox(env, orderId, true); }
+  catch (error) { console.error('Saved notification retry failed', error.message); }
+  const order = await getOrderById(env.DB, orderId);
+  const emailPending = order.notifications.length > 0;
+  return json({ ok: true, order, alreadyDone, emailPending,
+    ...(emailPending ? { warning: 'Izmena je sačuvana. Email čeka slanje; proverite obaveštenja porudžbine.' } : {})
+  }, 200, origin);
+}
+
+async function flushNotificationOutbox(env, orderId = null, force = false) {
+  if (!env.DB) return;
+  await ensureNotificationSchema(env.DB);
+  const now = Date.now();
+  // Resend idempotency lasts 24 h. Do not risk automatic duplicate delivery after
+  // that window if the provider accepted a message but the acknowledgement was lost.
+  await env.DB.prepare(`UPDATE notification_outbox SET status='attention', lease_token=NULL, lease_until=0,
+    last_error='Potrebna provera u email servisu pre ponovnog slanja.'
+    WHERE status IN ('pending','sending') AND first_attempt_at IS NOT NULL AND first_attempt_at<=? AND lease_until<=?`)
+    .bind(now-23*60*60*1000, now).run();
+  const visited = [];
+  for (let count = 0; count < 10; count++) {
+    const job = await env.DB.prepare(`SELECT * FROM notification_outbox
+    WHERE (status='pending' OR (status='sending' AND lease_until<=?))
+      AND (? IS NULL OR order_id=?) AND (?=1 OR next_attempt_at<=?)
+      AND id NOT IN(SELECT value FROM json_each(?))
+      AND NOT EXISTS(SELECT 1 FROM notification_outbox earlier WHERE earlier.order_id=notification_outbox.order_id
+        AND earlier.id<notification_outbox.id AND earlier.status!='sent') ORDER BY id LIMIT 1`)
+      .bind(now, orderId, orderId, force ? 1 : 0, now, JSON.stringify(visited)).first();
+    if (!job) break;
+    visited.push(job.id);
+    const token = crypto.randomUUID(), claimedAt = Date.now();
+    const claimed = await env.DB.prepare(`UPDATE notification_outbox SET status='sending', lease_token=?, lease_until=?,
+      attempts=attempts+1, first_attempt_at=COALESCE(first_attempt_at,?)
+      WHERE id=? AND (status='pending' OR (status='sending' AND lease_until<=?))
+      AND NOT EXISTS(SELECT 1 FROM notification_outbox earlier WHERE earlier.order_id=notification_outbox.order_id
+        AND earlier.id<notification_outbox.id AND earlier.status!='sent')`)
+      .bind(token, claimedAt+90000, claimedAt, job.id, claimedAt).run();
+    if (!claimed.meta.changes) continue;
+    const claimedJob = await env.DB.prepare("SELECT attempts FROM notification_outbox WHERE id=? AND lease_token=?").bind(job.id, token).first();
+    if (!claimedJob) continue;
+    try {
+      const payload = JSON.parse(job.payload_json);
+      if (payload.attachments) payload.attachments = await Promise.all(payload.attachments.map(async attachment => {
+        if (!attachment.r2Key) return attachment;
+        const object = await env.RECEIPTS?.get(attachment.r2Key);
+        if (!object) throw new Error('Fiskalni PDF nije dostupan za slanje.');
+        return { filename: attachment.filename, content: arrayBufferToBase64(await object.arrayBuffer()) };
+      }));
+      if (!env.RESEND_API_KEY) throw new Error('Resend API ključ nije podešen.');
+      const result = await sendEmail(env.RESEND_API_KEY, payload, job.operation_key);
+      if (!result.ok) throw new Error(`Email servis HTTP ${result.status}.`);
+      const sentAt = new Date().toISOString(), metadata = JSON.parse(job.metadata_json);
+      const statements = [
+        env.DB.prepare("UPDATE notification_outbox SET status='sent', sent_at=?, lease_token=NULL, lease_until=0, last_error=NULL, payload_json='{}' WHERE id=? AND lease_token=?")
+          .bind(sentAt, job.id, token),
+        env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'email_sent', ?, ? WHERE changes()=1")
+          .bind(job.order_id, `Email servis je prihvatio obaveštenje: ${payload.subject}`, sentAt)
+      ];
+      if (metadata.schedule) {
+        const schedule = metadata.schedule;
+        statements.push(env.DB.prepare(`UPDATE order_operations SET data_json=json_set(data_json,'$.localDelivery.notifiedAt',?)
+          WHERE order_id=? AND json_extract(data_json,'$.localDelivery.date')=?
+          AND json_extract(data_json,'$.localDelivery.timeWindow')=? AND json_extract(data_json,'$.localDelivery.location')=?
+          AND EXISTS(SELECT 1 FROM notification_outbox WHERE id=? AND status='sent' AND sent_at=?)`)
+          .bind(sentAt, job.order_id, schedule.date, schedule.timeWindow, schedule.location, job.id, sentAt));
+      }
+      await env.DB.batch(statements);
+    } catch (error) {
+      const attempts = claimedJob.attempts;
+      await env.DB.prepare(`UPDATE notification_outbox SET status=?, next_attempt_at=?, lease_token=NULL, lease_until=0, last_error=?
+        WHERE id=? AND lease_token=?`).bind(attempts >= 8 ? 'attention' : 'pending', Date.now()+Math.min(3600000,60000*2**attempts),
+          clean(error.message,200), job.id, token).run();
+    }
+  }
 }
 
 function isAdminAuthorized(request, env) {
@@ -948,6 +1060,9 @@ async function getOrderById(db, id) {
   order.operationsRevision=operations?.revision || 0;
   const events = await db.prepare("SELECT event_type, note, created_at FROM order_events WHERE order_id = ? ORDER BY id ASC").bind(id).all();
   order.events = events.results || [];
+  await ensureNotificationSchema(db);
+  const notifications = await db.prepare("SELECT id, status, attempts, last_error FROM notification_outbox WHERE order_id=? AND status!='sent' ORDER BY id").bind(id).all();
+  order.notifications = notifications.results || [];
   if (isApprovedLocalDelivery(order)) order.bankTransfer = bankTransferDetails(order);
   return order;
 }
@@ -1341,12 +1456,15 @@ async function enforceOrderRateLimit(request, env, submissionId) {
     const existing = await env.DB.prepare("SELECT 1 AS present FROM security_order_attempts WHERE ip_hash = ? AND submission_hash = ? LIMIT 1")
       .bind(ipHash, submissionHash).first();
     if (existing?.present) return { ok: true, duplicateAttempt: true };
-    const row = await env.DB.prepare("SELECT COUNT(*) AS count FROM security_order_attempts WHERE ip_hash = ? AND created_at >= ?")
-      .bind(ipHash, cutoff).first();
-    if (Number(row?.count || 0) >= RATE_LIMIT_MAX) return { ok: false };
-    await env.DB.prepare("INSERT OR IGNORE INTO security_order_attempts (ip_hash, submission_hash, created_at) VALUES (?, ?, ?)")
-      .bind(ipHash, submissionHash, now).run();
-    return { ok: true };
+    // A single SQLite write serializes concurrent requests. COUNT then INSERT
+    // could let several different submissions pass the last available slot.
+    const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO security_order_attempts (ip_hash, submission_hash, created_at)
+      SELECT ?,?,? WHERE (SELECT COUNT(*) FROM security_order_attempts WHERE ip_hash=? AND created_at>=?) < ?`)
+      .bind(ipHash, submissionHash, now, ipHash, cutoff, RATE_LIMIT_MAX).run();
+    if (inserted.meta.changes) return { ok: true };
+    const duplicate = await env.DB.prepare("SELECT 1 AS present FROM security_order_attempts WHERE ip_hash=? AND submission_hash=?")
+      .bind(ipHash, submissionHash).first();
+    return duplicate?.present ? { ok: true, duplicateAttempt: true } : { ok: false };
   } catch (error) {
     console.error("Rate limit check failed; Turnstile remains enforced", error);
     return { ok: true, degraded: true };
@@ -1537,25 +1655,20 @@ function buildOrder(data) {
 }
 
 async function sendEmail(apiKey, payload, idempotencyKey) {
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "User-Agent": "AdriaticTradeOrders/1.0",
-      "Idempotency-Key": idempotencyKey
-    },
-    body: JSON.stringify(payload)
-  });
-
-  let data = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
   try {
-    data = await response.json();
-  } catch {
-    data = await response.text().catch(() => "");
-  }
-
-  return { ok: response.ok, status: response.status, data };
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST", signal: controller.signal,
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json",
+        "User-Agent": "AdriaticTradeOrders/1.0", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => null);
+    return { ok: response.ok, status: response.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, data: { error: controller.signal.aborted ? "Email timeout" : "Email network error" } };
+  } finally { clearTimeout(timer); }
 }
 
 function businessEmailHtml(order) {

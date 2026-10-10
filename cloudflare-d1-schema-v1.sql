@@ -43,3 +43,14 @@ CREATE TABLE IF NOT EXISTS order_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_order_events_order_id ON order_events(order_id, id);
+
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, operation_key TEXT NOT NULL UNIQUE,
+    order_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', payload_json TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}', attempts INTEGER NOT NULL DEFAULT 0,
+    first_attempt_at INTEGER, next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+    created_at TEXT NOT NULL, sent_at TEXT
+  );
+CREATE INDEX IF NOT EXISTS idx_notification_due ON notification_outbox(status,next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_notification_order ON notification_outbox(order_id,id);
