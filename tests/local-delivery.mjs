@@ -1,71 +1,9 @@
-import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-
-// Isolated D1-compatible SQLite transactions and synthetic external services only.
-const source = fs.readFileSync('worker/adriatic-trade-worker-v4.5.0.js', 'utf8').replace('export default', 'const worker =');
-const png = Uint8Array.from([137,80,78,71,13,10,26,10,0]);
-const ips = 'Lična dostava — IPS na račun';
-const bank = 'Lična dostava — uplata na račun';
-const cash = 'Lična dostava — gotovina';
-const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Belgrade', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());
-const schedule = {date:'2099-01-01',timeWindow:'17–19h',location:'Test 1'};
-const proof = {paymentConfirmed:'yes',remittanceDate:today,paymentReference:'IZVOD-42 / uplata 3'};
-
-function harness() {
-  const sql = new DatabaseSync(':memory:');
-  sql.exec(fs.readFileSync('cloudflare-d1-schema-v1.sql', 'utf8'));
-  const db = { prepare(query) {
-    const stmt = sql.prepare(query); let args = [];
-    return { bind(...values) { args=values; return this; }, async run() { return {meta:{changes:Number(stmt.run(...args).changes)}}; },
-      async first() {return stmt.get(...args)||null;}, async all() {return {results:stmt.all(...args)};} };
-  }, async batch(stmts) {sql.exec('BEGIN');try {const r=[];for(const s of stmts)r.push(await s.run());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}} };
-  const state={qr:'ok',email:'ok',emails:[],qrRequests:[],timeoutMs:[],onEmail:null};
-  const fetch=async (url, options) => {
-    if (url.startsWith('https://nbs.rs/')) {
-      state.qrRequests.push(JSON.parse(options.body));
-      if (state.qr==='error') return new Response('unavailable', {status:503});
-      if (state.qr==='throw') throw new Error('synthetic network failure');
-      if (state.qr==='timeout') return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('synthetic abort')), {once:true}));
-      if (state.qr==='wrong-type') return new Response('{}',{headers:{'Content-Type':'application/json'}});
-      if (state.qr==='bad-png') return new Response('invalid',{headers:{'Content-Type':'image/png'}});
-      return new Response(png,{headers:{'Content-Type':'image/png'}});
-    }
-    if(url==='https://api.resend.com/emails') {
-      state.emails.push(JSON.parse(options.body));
-      if(state.onEmail) state.onEmail();
-      return new Response(JSON.stringify({id:'synthetic'}),{status:state.email==='ok'?200:503,headers:{'Content-Type':'application/json'}});
-    }
-    throw new Error('Unexpected external request: '+url);
-  };
-  const ctx=vm.createContext({Request,Response,Headers,URL,FormData,console:{error(){}},Intl,Date,crypto,TextEncoder,AbortController,btoa,fetch,
-    setTimeout(fn,ms){state.timeoutMs.push(ms);return setTimeout(fn,state.qr==='timeout'?5:ms);},clearTimeout});
-  vm.runInContext(source,ctx);ctx.env={DB:db,ADMIN_TOKEN:'synthetic-admin-token-for-tests-only',RESEND_API_KEY:'synthetic'};
-  vm.runInContext('globalThis.run=request=>worker.fetch(request,env);globalThis.insert=order=>insertOrder(env.DB,order);',ctx);
-  const call=(id,action='',body,method=body===undefined?'GET':'POST')=>{
-    const headers={Origin:'https://adriatictrade.rs',Authorization:'Bearer synthetic-admin-token-for-tests-only'};
-    const init={method,headers};
-    if(body instanceof FormData) init.body=body;
-    else if(body!==undefined){headers['Content-Type']='application/json';init.body=JSON.stringify(body);}
-    return ctx.run(new Request(`https://test/admin/orders/${id}${action?'/'+action:''}`,init));
-  };
-  const get=async id=>(await (await call(id)).json()).order;
-  const add=async(id='AT-20261010-ABCD',options={})=>{
-    await ctx.insert({id,submissionId:id,createdAt:'2026-10-10T10:00:00Z',customer:{firstName:'Test',lastName:'Kupac',email:'test@example.com',phone:'060000000'},
-      delivery:{method:'Dostava na adresu',address:'Test 1',postalCode:'21000',city:'Novi Sad'},payment:'Pouzećem',items:[{sku:'10306',name:'So',qty:2,unitPrice:299,lineTotal:598}],goodsTotal:598,shipping:420,total:1018});
-    await get(id); // Initialize operations schema and row.
-    if(options.local!==false) assert.equal((await call(id,'local-delivery',{},'POST')).status,200);
-    if(options.payment) sql.prepare('UPDATE orders SET payment=? WHERE id=?').run(options.payment,id);
-    if(options.status) sql.prepare('UPDATE orders SET status=? WHERE id=?').run(options.status,id);
-    if(options.operations) sql.prepare('UPDATE order_operations SET data_json=? WHERE order_id=?').run(JSON.stringify(options.operations),id);
-    return id;
-  };
-  const delivered=(id,body={})=>{const fd=new FormData();for(const[k,v]of Object.entries(body))fd.set(k,v);return call(id,'local-delivered',fd);};
-  const operations=async(id,body)=>call(id,'operations',{revision:(await get(id)).operationsRevision,reason:'Regresiona provera',...body});
-  return {sql,db,ctx,state,call,get,add,delivered,operations};
-}
+import {harness,ips,bank,cash,today,schedule,proof} from './helpers/local-delivery-harness.mjs';
+const png=Uint8Array.from([137,80,78,71,13,10,26,10,0]);
 
 function regression(name,fn){test(name,fn);}
 regression('approval uses IPS, free shipping, identical transfer/QR fields and unpaid state',async()=>{
@@ -212,4 +150,61 @@ regression('changing verified bank evidence requires a fresh check and cannot er
   assert.deepEqual(await h.get(id),before);
   assert.equal((await h.operations(id,{...proof,paymentReference:'IZVOD-43 / ispravka'})).status,200);
   assert.equal((await h.get(id)).operations.paymentReference,'IZVOD-43 / ispravka');
+});
+
+const pdfBytes=new TextEncoder().encode('%PDF-1.4\nsynthetic receipt\n%%EOF');
+const pdfFile=()=>new File([pdfBytes],'test-racun.pdf',{type:'application/pdf'});
+regression('new PDF is attached, stored and downloaded after verified local delivery',async()=>{
+  const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}});
+  assert.equal((await h.delivered(id,{...proof,receipt:pdfFile()})).status,200);
+  const o=await h.get(id),email=h.state.emails.at(-1);assert.equal(o.receiptFilename,'test-racun.pdf');assert.ok(h.receiptFiles.has(o.receiptKey));assert.match(email.html,/Fiskalni račun je u prilogu/);assert.equal(email.attachments[0].content,Buffer.from(pdfBytes).toString('base64'));
+  const download=await h.call(id,'receipt');assert.equal(download.status,200);assert.deepEqual(Buffer.from(await download.arrayBuffer()),Buffer.from(pdfBytes));
+});
+regression('previously linked PDF is actually reattached, not merely promised in email',async()=>{
+  const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}});
+  await h.receipts.put('existing.pdf',pdfBytes,{httpMetadata:{contentType:'application/pdf'}});
+  h.sql.prepare('UPDATE orders SET receipt_key=?,receipt_filename=? WHERE id=?').run('existing.pdf','existing.pdf',id);
+  assert.equal((await h.delivered(id,proof)).status,200);assert.equal(h.state.emails.at(-1).attachments[0].filename,'existing.pdf');assert.equal(h.state.emails.at(-1).attachments[0].content,Buffer.from(pdfBytes).toString('base64'));assert.ok(h.receiptFiles.has('existing.pdf'));
+});
+regression('failure to email new PDF rolls back new file; existing PDF is never deleted',async()=>{
+  for(const saved of [false,true]){
+    const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}});
+    if(saved){await h.receipts.put('existing.pdf',pdfBytes,{});h.sql.prepare('UPDATE orders SET receipt_key=?,receipt_filename=? WHERE id=?').run('existing.pdf','existing.pdf',id);}
+    const before=await h.get(id);h.state.email='error';
+    assert.equal((await h.delivered(id,{...proof,...(saved?{}:{receipt:pdfFile()})})).status,502);assert.deepEqual(await h.get(id),before);assert.equal(h.receiptFiles.size,saved?1:0);
+  }
+});
+regression('missing linked PDF blocks false attachment notice and payment recording',async()=>{
+  const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}});
+  h.sql.prepare('UPDATE orders SET receipt_key=?,receipt_filename=? WHERE id=?').run('missing.pdf','missing.pdf',id);
+  const before=await h.get(id);assert.equal((await h.delivered(id,proof)).status,409);assert.equal(h.state.emails.length,0);assert.deepEqual(await h.get(id),before);
+});
+regression('invalid or oversized PDF is rejected without email or payment changes',async()=>{
+  const h=harness(),id=await h.add(undefined,{status:'confirmed',operations:{localDelivery:schedule}}),before=await h.get(id);
+  assert.equal((await h.delivered(id,{...proof,receipt:new File(['not pdf'],'fake.pdf',{type:'application/pdf'})})).status,400);
+  assert.equal((await h.delivered(id,{...proof,receipt:new File([new Uint8Array(5*1024*1024+1)],'large.pdf',{type:'application/pdf'})})).status,413);
+  assert.equal(h.state.emails.length,0);assert.equal(h.receiptFiles.size,0);assert.deepEqual(await h.get(id),before);
+});
+
+regression('schedule rejects invalid dates and assigns a new email key when place changes',async()=>{
+ const h=harness(),id=await h.add(undefined,{status:'confirmed'});
+ for(const date of ['2099-02-30','2099-13-01','2020-01-01'])assert.equal((await h.call(id,'local-schedule',{...schedule,date})).status,400);
+ assert.equal(h.state.emails.length,0);
+ assert.equal((await h.call(id,'local-schedule',schedule)).status,200);
+ assert.equal((await h.call(id,'local-schedule',{...schedule,location:'Drugo mesto'})).status,200);
+ assert.notEqual(h.state.emailKeys[0],h.state.emailKeys[1]);assert.equal((await h.get(id)).operations.localDelivery.location,'Drugo mesto');
+});
+regression('schedule cannot overwrite payment recorded while notification is in flight',async()=>{
+ const h=harness(),id=await h.add(undefined,{status:'confirmed'});
+ h.state.onEmail=()=>h.sql.prepare('UPDATE order_operations SET revision=revision+1,data_json=? WHERE order_id=?').run(JSON.stringify({paymentStatus:'paid',paymentMethod:'bank_transfer',paymentReference:'NOVA UPLATA'}),id);
+ assert.equal((await h.call(id,'local-schedule',schedule)).status,409);
+ const o=await h.get(id);assert.equal(o.operations.paymentStatus,'paid');assert.equal(o.operations.paymentReference,'NOVA UPLATA');assert.equal(o.events.filter(x=>x.event_type==='local_delivery_scheduled').length,0);
+});
+regression('confirmation cannot revive a rejected order or overwrite a concurrent payment choice',async()=>{
+ for(const change of ['rejected','bank']){
+  const h=harness(),id=await h.add();
+  h.state.onEmail=()=>change==='rejected'?h.sql.prepare("UPDATE orders SET status='rejected' WHERE id=?").run(id):h.sql.prepare('UPDATE orders SET payment=? WHERE id=?').run(bank,id);
+  assert.equal((await h.call(id,'confirm',{})).status,409);
+  const o=await h.get(id);assert.equal(o.status,change==='rejected'?'rejected':'new');assert.equal(o.events.filter(x=>x.event_type==='confirmed').length,0);if(change==='bank')assert.equal(o.payment,bank);
+ }
 });

@@ -13,6 +13,7 @@ on:
       - "admin.html"
       - "dostava-placanje.html"
       - "uslovi-kupovine.html"
+      - "dokumenti/**"
   push:
     branches: [main]
     paths:

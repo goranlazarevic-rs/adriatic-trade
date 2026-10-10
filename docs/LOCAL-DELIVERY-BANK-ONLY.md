@@ -31,4 +31,14 @@ node tests/local-delivery.mjs
 
 Nova regresija proverava IPS i transfer, pet tipova QR greške, priloge i bankarske instrukcije, blokadu gotovine, očuvanje istorije, proveru bankarske uplate, refundacije, ponovljene zahteve, konflikt konkurentnih izmena, kurirsko pouzeće i administratorski prikaz. GitHub release gate pokreće obe grupe testova na PR-u; PR grana ne pokreće deploy job.
 
-Pre produkcionog puštanja proveriti na testnom okruženju stvarni NBS PNG i izgled emaila u klijentu, skeniranje/uvoz u bankarsku aplikaciju i čitljivost PDF fiskalnog računa. Automatizovani testovi koriste sintetičke servise i SQLite; ne šalju emailove kupcima i ne pristupaju produkcionoj bazi. Produkciona promocija zahteva zaseban pregled/spajanje; ova razvojna grana sama ne menja produkciju.
+Opciona integraciona provera koristi Playwright i Chromium (instalirani van repozitorijuma):
+
+```sh
+node tests/local-delivery-browser.mjs
+```
+
+Ako Playwright nije na standardnoj Node putanji, postaviti `PLAYWRIGHT_MODULE_PATH` na njegov modul. `CHROMIUM_EXECUTABLE` bira lokalni izvršni fajl; `QA_ARTIFACT_DIR` čuva snimke ekrana i HTML emailove. Dva scenarija koriste stvarni admin i Worker kod, izolovanu SQLite bazu i zamene za R2, Resend i NBS: IPS prekid na računaru (1440 × 1000) i bankarski transfer na telefonu (390 × 844). Prolaze od odobrenja do preuzimanja PDF priloga i proveravaju prikaz tri kupčeva emaila. Testni PDF je postojeće obaveštenje, samo kao primer ispravnog formata, a ne stvarni fiskalni račun.
+
+Regresija ima 34 slučaja. Dodatne provere pokrivaju povezani PDF, neuspešno slanje i čišćenje novog priloga, promenu lokacije termina, nevažeće datume i zaštitu naplate/statusa od konkurentnih izmena. Obaveštenje u PDF-u takođe razlikuje kurirsko pouzeće od lične dostave uz IPS/račun.
+
+Pre produkcionog puštanja proveriti na testnom okruženju stvarni NBS PNG za podatke firme, izgled emaila u poštanskom klijentu, skeniranje/uvoz u bankarsku aplikaciju i stvarni PDF fiskalnog računa. Automatizovani testovi ne šalju emailove kupcima i ne pristupaju produkcionoj bazi. Detaljan rezultat i preostale provere: [PREPRODUCTION-CHECK-20261010.md](PREPRODUCTION-CHECK-20261010.md). Produkciona promocija zahteva zaseban pregled/spajanje; ova razvojna grana sama ne menja produkciju.
