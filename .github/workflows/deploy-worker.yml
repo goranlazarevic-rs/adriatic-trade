@@ -1,5 +1,5 @@
 name: Adriatic Trade Release Gate
-# Validation runs before every production deployment.
+# PRs and pushes only validate. Production requires manual dispatch and owner approval.
 
 on:
   pull_request:
@@ -10,8 +10,10 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "admin.html"
+      - "checkout.html"
       - "dostava-placanje.html"
       - "uslovi-kupovine.html"
       - "dokumenti/**"
@@ -23,6 +25,7 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "admin.html"
       - "checkout.html"
@@ -30,6 +33,17 @@ on:
       - "uslovi-kupovine.html"
       - "dokumenti/**"
   workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: "Request production deployment (requires separate owner approval)"
+        type: boolean
+        required: true
+        default: false
+      approved_sha:
+        description: "Full 40-character main commit SHA approved for production; blank for validation only"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -39,6 +53,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate production deployment request
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: bash scripts/check-worker-release.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -53,8 +75,11 @@ jobs:
 
       - name: Install isolated integration test dependencies
         run: |
-          npm install --prefix "$RUNNER_TEMP/qa" --no-audit --no-fund miniflare@5.20261006.1-alpha playwright@1.62.1
+          npm install --prefix "$RUNNER_TEMP/qa" --no-audit --no-fund miniflare@5.20261006.1-alpha playwright@1.62.1 yaml@2.8.1
           "$RUNNER_TEMP/qa/node_modules/.bin/playwright" install --with-deps chromium
+
+      - name: Release gate policy regressions
+        run: YAML_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/yaml" node tests/release-gate.mjs
 
       - name: Cloudflare runtime and browser regressions
         run: |
@@ -80,14 +105,23 @@ jobs:
           grep -q 'crons: \["\*/5 \* \* \* \*"\]' .github/workflows/deploy-worker.yml
 
   deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_production == true
     needs: validate
+    environment:
+      name: worker-production
     runs-on: ubuntu-latest
     concurrency:
       group: adriatic-trade-production
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Recheck approved revision after environment approval
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: bash scripts/check-worker-release.sh
 
       - name: Validate deployment secrets
         env:
@@ -129,9 +163,9 @@ jobs:
             }' > wrangler.deploy.json
 
       - name: Reject an obsolete main revision before deployment
-        run: |
-          CURRENT_MAIN=$(git ls-remote origin refs/heads/main | cut -f1)
-          test "$CURRENT_MAIN" = "$GITHUB_SHA"
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: bash scripts/check-worker-release.sh
 
       - name: Deploy Worker v4.7.2
         env:
