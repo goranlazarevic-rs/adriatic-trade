@@ -21,6 +21,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "index.html"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
       - "assets/js/main.js"
