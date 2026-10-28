@@ -102,9 +102,10 @@ const ALLOWED_ORIGINS = new Set([
 
 export default {
   async scheduled(controller, env, ctx) {
+    ctx.waitUntil(flushInquiryOutbox(env).catch(() => console.error('Inquiry retry failed')));
     ctx.waitUntil(flushNotificationOutbox(env).catch(error => console.error("Email retry failed", error.message)));
   },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
 
@@ -117,10 +118,11 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.7.2",
+        version: "4.8.0",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
+        inquiries: inquiryReady(env),
         security: Boolean(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY && env.SECURITY_PEPPER)
       }, 200, origin);
     }
@@ -132,6 +134,16 @@ export default {
       const siteKey = clean(env.TURNSTILE_SITE_KEY, 100);
       if (!siteKey) return json({ ok: false, error: "Zaštita porudžbine nije podešena." }, 503, origin);
       return json({ ok: true, turnstileSiteKey: siteKey }, 200, origin);
+    }
+
+    if (url.pathname === "/inquiry/config" && request.method === "GET") {
+      if (!ALLOWED_ORIGINS.has(origin)) return json({ok:false},403,origin);
+      if (!inquiryReady(env)) return json({ok:false,error:"Prijem upita trenutno nije dostupan."},503,origin);
+      return json({ok:true,turnstileSiteKey:env.TURNSTILE_SITE_KEY,ticket:await inquiryTicket(env)},200,origin);
+    }
+    if (url.pathname === "/inquiry") {
+      if (request.method !== "POST") return json({ok:false,error:"Method not allowed"},405,origin);
+      return handleInquiry(request,env,origin,ctx);
     }
 
     if (url.pathname === "/order") {
@@ -150,6 +162,12 @@ export default {
         return json({ ok: false, error: "D1 baza nije povezana sa Worker-om." }, 503, origin);
       }
       try {
+        if (url.pathname === "/admin/inquiries" && request.method === "GET") {
+          await ensureInquirySchema(env.DB);
+          await pruneInquiries(env.DB);
+          const rows = await env.DB.prepare("SELECT id,status,created_at,attempts FROM inquiry_outbox ORDER BY created_at DESC LIMIT 100").all();
+          return json({ok:true,inquiries:rows.results},200,origin);
+        }
         return await handleAdmin(request, env, url, origin);
       } catch (error) {
         console.error("Admin API error", error);
@@ -1421,6 +1439,177 @@ function sanitizeHeaderFilename(name) {
 
 
 
+// Contact/B2B use the existing D1 + Resend services, separately from order state.
+const INQUIRY_DAY = 24 * 60 * 60 * 1000;
+function inquiryReady(env) {
+  return Boolean(env.DB && env.RESEND_API_KEY && env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY && env.SECURITY_PEPPER);
+}
+async function ensureInquirySchema(db) {
+  // Deliberately not cached globally: different test/staging bindings remain isolated.
+  await db.prepare(`CREATE TABLE IF NOT EXISTS inquiry_outbox (
+    id TEXT PRIMARY KEY, submission_hash TEXT NOT NULL UNIQUE, content_hash TEXT UNIQUE,
+    ip_hash TEXT, payload_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL, first_attempt_at INTEGER, next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0
+  )`).run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_inquiry_ip ON inquiry_outbox(ip_hash,created_at)').run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS inquiry_attempts (
+    ip_hash TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL
+  )`).run();
+}
+async function pruneInquiries(db, now = Date.now()) {
+  await db.prepare("UPDATE inquiry_outbox SET payload_json='{}', content_hash=NULL, ip_hash=NULL, status=CASE WHEN status='sent' THEN 'sent' ELSE 'attention' END WHERE created_at<=?")
+    .bind(now-INQUIRY_DAY).run();
+  await db.prepare('DELETE FROM inquiry_outbox WHERE created_at<?').bind(now-7*INQUIRY_DAY).run();
+  await db.prepare('DELETE FROM inquiry_attempts WHERE window_start<?').bind(now-INQUIRY_DAY).run();
+}
+async function inquirySignature(value, pepper) {
+  const key = await crypto.subtle.importKey('raw',new TextEncoder().encode(pepper),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const signature = await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(signature),b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function inquiryTicket(env) {
+  const value = `${Date.now()}.${crypto.randomUUID()}`;
+  return `${value}.${await inquirySignature('inquiry-ticket/'+value, env.SECURITY_PEPPER)}`;
+}
+async function validInquiryTicket(env, ticket) {
+  if (typeof ticket !== 'string' || !/^\d{13}\.[0-9a-f-]{36}\.[0-9a-f]{64}$/.test(ticket)) return false;
+  const [time, nonce, signature] = ticket.split('.');
+  const age = Date.now()-Number(time);
+  return age>=800 && age<INQUIRY_DAY && constantTimeEqual(signature,
+    await inquirySignature(`inquiry-ticket/${time}.${nonce}`, env.SECURITY_PEPPER));
+}
+function validateInquiry(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const {type, fields, submissionId} = body;
+  if (!['contact','b2b'].includes(type) || typeof submissionId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionId || '')) return null;
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields) || fields.Saglasnost !== 'Da') return null;
+  const limits = {Ime:120,email:160,Telefon:60,Poruka:5000,...(type==='b2b'?{Kompanija:160,'Tip saradnje':60}:{})};
+  if (Object.keys(fields).some(key=>!Object.hasOwn(limits,key) && key!=='Saglasnost')) return null;
+  const data = {};
+  for (const [key,max] of Object.entries(limits)) {
+    const value = fields[key] ?? '';
+    if (typeof value !== 'string' || value.length>max || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value)) return null;
+    if (key!=='Poruka' && /[\r\n]/.test(value)) return null;
+    data[key] = value.trim();
+  }
+  if (!data.Ime || !data.Poruka || !isEmail(data.email) || /[<>(),;:\"\[\]\\]/.test(data.email) || (type==='b2b' && !data.Kompanija)) return null;
+  if (type==='b2b' && !['Maloprodaja','HoReCa','Specijalizovana prodavnica','Veleprodaja','Drugo'].includes(data['Tip saradnje'])) return null;
+  data.email = data.email.toLowerCase();
+  data.Saglasnost = 'Da';
+  return {type,fields:data,submissionId:submissionId.toLowerCase()};
+}
+async function readInquiryBody(request) {
+  // Bound actual streamed bytes even without Content-Length (chunked requests).
+  if (Number(request.headers.get('Content-Length'))>20000) throw new Error('large');
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error('json');
+  let bytes = 0; const chunks = [];
+  try {
+    for (;;) {
+      const {done,value} = await reader.read(); if (done) break;
+      bytes += value.byteLength;
+      if (bytes>20000) { await reader.cancel(); throw new Error('large'); }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const merged = new Uint8Array(bytes); let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk,offset); offset+=chunk.byteLength; }
+  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(merged));
+}
+async function handleInquiry(request, env, origin, ctx) {
+  const unavailable = () => json({ok:false,error:'Prijem upita trenutno nije dostupan. Pokušajte kasnije ili pišite na info@adriatictrade.rs.'},503,origin);
+  if (!ALLOWED_ORIGINS.has(origin)) return json({ok:false,error:'Origin not allowed'},403,origin);
+  if (!inquiryReady(env)) return unavailable();
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('Content-Type')||'')) return json({ok:false,error:'Expected application/json'},415,origin);
+  const ip = request.headers.get('CF-Connecting-IP');
+  if (!ip) return unavailable(); // Never fail open when the rate limiter is unavailable.
+  try {
+    await ensureInquirySchema(env.DB);
+    await pruneInquiries(env.DB);
+    const now = Date.now(), ipHash = await securityHash('inquiry-ip/'+ip,env.SECURITY_PEPPER);
+    // One serialized write; shared by contact and B2B, before Siteverify costs.
+    const attempt = await env.DB.prepare(`INSERT INTO inquiry_attempts(ip_hash,window_start,count) VALUES(?,?,1)
+      ON CONFLICT(ip_hash) DO UPDATE SET
+        count=CASE WHEN window_start<=? THEN 1 ELSE count+1 END,
+        window_start=CASE WHEN window_start<=? THEN excluded.window_start ELSE window_start END
+      WHERE window_start<=? OR count<20`).bind(ipHash,now,now-600000,now-600000,now-600000).run();
+    if (!attempt.meta.changes) return json({ok:false,error:'Previše pokušaja. Sačekajte 10 minuta ili nas kontaktirajte emailom.'},429,origin,{'Retry-After':'600'});
+    let body;
+    try { body = await readInquiryBody(request); }
+    catch (error) { return json({ok:false,error:'Neispravni podaci upita.'},error.message==='large'?413:400,origin); }
+    const data = validateInquiry(body);
+    if (!data || body.security?.website !== '' || !await validInquiryTicket(env,body.security?.ticket)) {
+      return json({ok:false,error:'Proverite obavezna polja i saglasnost. Ako je stranica dugo otvorena, osvežite je.'},400,origin);
+    }
+    const token = body.security?.turnstileToken;
+    if (typeof token !== 'string' || !token || token.length>2048) return json({ok:false,error:'Ponovite bezbednosnu proveru.'},403,origin);
+    const verified = await verifyTurnstile(request,env,token,`inquiry_${data.type}`,true);
+    if (!verified.ok) return json({ok:false,error:'Bezbednosna provera nije uspela. Pokušajte ponovo.'},verified.status||403,origin);
+    const submissionHash = await securityHash('inquiry-id/'+data.submissionId,env.SECURITY_PEPPER);
+    const contentHash = await securityHash(JSON.stringify({type:data.type,fields:data.fields}),env.SECURITY_PEPPER);
+    const previous = await env.DB.prepare('SELECT id,content_hash,status FROM inquiry_outbox WHERE submission_hash=?').bind(submissionHash).first();
+    if (previous && previous.content_hash!==contentHash) return json({ok:false,error:'Ovaj pokušaj je već zabeležen. Osvežite stranicu za izmenjeni upit.'},409,origin);
+    let row = previous || await env.DB.prepare('SELECT id,status FROM inquiry_outbox WHERE content_hash=?').bind(contentHash).first();
+    if (!row) {
+      const id = crypto.randomUUID();
+      const payload = {from:FROM_EMAIL,to:[BUSINESS_EMAIL],reply_to:data.fields.email,
+        subject:`${data.type==='b2b'?'B2B upit':'Kontakt'} sa adriatictrade.rs [${id}]`,
+        text:Object.entries(data.fields).map(([key,value])=>`${key}: ${value}`).join('\n\n')};
+      // Atomic rate admission + queue insert; UNIQUE constraints serialize duplicates.
+      await env.DB.prepare(`INSERT OR IGNORE INTO inquiry_outbox(id,submission_hash,content_hash,ip_hash,payload_json,created_at)
+        SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM inquiry_outbox WHERE ip_hash=? AND created_at>=?)<5`)
+        .bind(id,submissionHash,contentHash,ipHash,JSON.stringify(payload),now,ipHash,now-3600000).run();
+      row = await env.DB.prepare('SELECT id,status FROM inquiry_outbox WHERE content_hash=?').bind(contentHash).first();
+      if (!row) {
+        const conflict = await env.DB.prepare('SELECT id FROM inquiry_outbox WHERE submission_hash=?').bind(submissionHash).first();
+        if (conflict) return json({ok:false,error:'Identifikator je već upotrebljen za drugi upit.'},409,origin);
+        return json({ok:false,error:'Previše upita sa ove mreže. Pokušajte za sat vremena ili pišite na info@adriatictrade.rs.'},429,origin,{'Retry-After':'3600'});
+      }
+    }
+    if (row.status==='attention') return unavailable();
+    // Acceptance means durable receipt, not a promise of inbox delivery.
+    if (ctx?.waitUntil) ctx.waitUntil(flushInquiryOutbox(env,row.id).catch(()=>console.error('Inquiry delivery deferred')));
+    return json({ok:true,accepted:true,delivery:row.status==='sent'?'sent':'pending'},row.status==='sent'?200:202,origin);
+  } catch {
+    // Do not log request bodies, email addresses, IPs, tokens or provider errors.
+    console.error('Inquiry service unavailable');
+    return unavailable();
+  }
+}
+async function flushInquiryOutbox(env, onlyId = null) {
+  if (!env.DB) return;
+  await ensureInquirySchema(env.DB);
+  await pruneInquiries(env.DB);
+  // Leave time before Resend's 24 h idempotency expiry, including request timeout.
+  await env.DB.prepare(`UPDATE inquiry_outbox SET status='attention',lease_token=NULL,lease_until=0
+    WHERE status IN ('pending','sending') AND first_attempt_at<=? AND lease_until<=?`)
+    .bind(Date.now()-23*3600000,Date.now()).run();
+  const jobs = await env.DB.prepare(`SELECT * FROM inquiry_outbox
+    WHERE (status='pending' OR (status='sending' AND lease_until<=?))
+      AND next_attempt_at<=? AND (? IS NULL OR id=?) ORDER BY created_at LIMIT 10`)
+    .bind(Date.now(),Date.now(),onlyId,onlyId).all();
+  for (const job of jobs.results) {
+    const now = Date.now(), lease = crypto.randomUUID();
+    const claimed = await env.DB.prepare(`UPDATE inquiry_outbox SET status='sending',lease_token=?,lease_until=?,
+      first_attempt_at=COALESCE(first_attempt_at,?),attempts=attempts+1
+      WHERE id=? AND created_at>? AND (first_attempt_at IS NULL OR first_attempt_at>?) AND next_attempt_at<=?
+      AND (status='pending' OR (status='sending' AND lease_until<=?))`)
+      .bind(lease,now+90000,now,job.id,now-INQUIRY_DAY,now-23*3600000,now,now).run();
+    if (!claimed.meta.changes) continue;
+    let sent = false;
+    try {
+      if (env.RESEND_API_KEY) {
+        const result = await sendEmail(env.RESEND_API_KEY,JSON.parse(job.payload_json),`inquiry/${job.id}`);
+        sent = result.ok && typeof result.data?.id==='string' && Boolean(result.data.id);
+      }
+    } catch { /* Preserve the same payload/key on an ambiguous failure. */ }
+    await env.DB.prepare(`UPDATE inquiry_outbox SET status=?,payload_json=CASE WHEN ?=1 THEN '{}' ELSE payload_json END,
+      next_attempt_at=?,lease_token=NULL,lease_until=0 WHERE id=? AND lease_token=?`)
+      .bind(sent?'sent':'pending',sent?1:0,Date.now()+Math.min(3600000,60000*2**Math.min(job.attempts+1,6)),job.id,lease).run();
+  }
+}
+
 async function ensureSecuritySchema(db) {
   if (!db || securitySchemaReady) return;
   await db.prepare(`CREATE TABLE IF NOT EXISTS security_order_attempts (
@@ -1477,45 +1666,34 @@ async function securityHash(value, pepper = "") {
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function verifyTurnstile(request, env, rawToken) {
+async function verifyTurnstile(request, env, rawToken, expectedAction = TURNSTILE_ACTION, bounded = false) {
   const secret = clean(env.TURNSTILE_SECRET_KEY, 200);
-  if (!secret) {
-    console.error("TURNSTILE_SECRET_KEY is missing");
-    return { ok: false, status: 503, error: "Zaštita porudžbine trenutno nije dostupna. Molimo pokušajte kasnije." };
-  }
+  if (!secret) return {ok:false,status:503};
   const token = clean(rawToken, 2048);
-  if (!token) return { ok: false, status: 403 };
+  if (!token) return {ok:false,status:403};
   const remoteip = clean(request.headers.get("CF-Connecting-IP"), 80);
-  let response;
+  const controller = bounded ? new AbortController() : null;
+  const timer = bounded ? setTimeout(() => controller.abort(),8000) : null;
   try {
-    response = await fetch(TURNSTILE_VERIFY_URL, {
+    const response = await fetch(TURNSTILE_VERIFY_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ secret, response: token, remoteip: remoteip || undefined })
+      body: JSON.stringify({ secret, response: token, remoteip: remoteip || undefined }),
+      ...(controller ? {signal:controller.signal} : {})
     });
-  } catch (error) {
-    console.error("Turnstile network error", error);
-    return { ok: false, status: 503, error: "Bezbednosna provera trenutno nije dostupna. Molimo pokušajte ponovo." };
-  }
-  if (!response.ok) {
-    console.error("Turnstile Siteverify HTTP error", response.status);
-    return { ok: false, status: 503, error: "Bezbednosna provera trenutno nije dostupna. Molimo pokušajte ponovo." };
-  }
-  let result = null;
-  try { result = await response.json(); } catch {}
-  if (!result?.success) {
-    console.warn("Turnstile rejected order", result?.["error-codes"] || []);
-    return { ok: false, status: 403 };
-  }
-  if (result.action !== TURNSTILE_ACTION) {
-    console.warn("Turnstile action mismatch", result.action);
-    return { ok: false, status: 403 };
-  }
-  if (!ALLOWED_TURNSTILE_HOSTS.has(String(result.hostname || "").toLowerCase())) {
-    console.warn("Turnstile hostname mismatch", result.hostname);
-    return { ok: false, status: 403 };
-  }
-  return { ok: true };
+    if (!response.ok) return {ok:false,status:503};
+    let result = null;
+    try { result = await response.json(); } catch { return {ok:false,status:503}; }
+    if (result?.success !== true || result.action !== expectedAction ||
+        !ALLOWED_TURNSTILE_HOSTS.has(String(result.hostname || "").toLowerCase())) {
+      return {ok:false,status:403};
+    }
+    return {ok:true};
+  } catch {
+    // Provider errors may contain request details; never log tokens or addresses.
+    console.error("Turnstile verification unavailable");
+    return {ok:false,status:503};
+  } finally { if (timer !== null) clearTimeout(timer); }
 }
 
 function commonEmailTypoSuggestion(email) {
@@ -1906,6 +2084,7 @@ function corsHeaders(origin) {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
+    "Access-Control-Expose-Headers": "Retry-After",
     "Vary": "Origin",
     "Cache-Control": "no-store"
   };

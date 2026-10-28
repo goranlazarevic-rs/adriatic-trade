@@ -42,7 +42,7 @@ export function harness() {
   };
   const receiptFiles=new Map();
   const receipts={async put(key,buffer,metadata){receiptFiles.set(key,{buffer,metadata});},async delete(key){receiptFiles.delete(key);},async get(key){const file=receiptFiles.get(key);return file?{async arrayBuffer(){return file.buffer;},body:file.buffer,httpMetadata:file.metadata?.httpMetadata}:null;}};
-  const ctx=vm.createContext({Request,Response,Headers,URL,FormData,console:{error(){},warn(){},log(){}},Intl,Date,crypto,TextEncoder,AbortController,btoa,fetch,
+  const ctx=vm.createContext({Request,Response,Headers,URL,FormData,console:{error(){},warn(){},log(){}},Intl,Date,crypto,TextEncoder,TextDecoder,AbortController,btoa,fetch,
     setTimeout(fn,ms){state.timeoutMs.push(ms);return setTimeout(fn,state.qr==='timeout'?5:ms);},clearTimeout});
   vm.runInContext(source,ctx);ctx.env={DB:db,RECEIPTS:receipts,ADMIN_TOKEN:'synthetic-admin-token-for-tests-only',RESEND_API_KEY:'synthetic'};
   vm.runInContext('globalThis.run=request=>worker.fetch(request,env);globalThis.insert=order=>insertOrder(env.DB,order);',ctx);
