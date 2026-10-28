@@ -13,7 +13,8 @@ const {validate, deploy} = workflow.jobs;
 const inputs = workflow.on.workflow_dispatch.inputs;
 
 assert.deepEqual(workflow.on.pull_request.paths, workflow.on.push.paths);
-assert.ok(workflow.on.pull_request.paths.includes('checkout.html'));
+for(const file of ['checkout.html','kontakt.html','saradnja.html','kontakt-hvala.html','saradnja-hvala.html','politika-privatnosti.html','assets/js/inquiry-forms.js'])assert.ok(workflow.on.pull_request.paths.includes(file),file);
+for(const file of ['tests/inquiry-security.mjs','tests/inquiry-runtime.mjs','tests/inquiry-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
 assert.ok(workflow.on.pull_request.paths.includes('scripts/check-worker-release.sh'));
 assert.deepEqual(workflow.on.pull_request.branches, ['main']);
 assert.deepEqual(workflow.on.push.branches, ['main']);

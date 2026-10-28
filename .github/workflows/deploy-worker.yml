@@ -6,6 +6,12 @@ on:
     branches: [main]
     paths:
       - "index.html"
+      - "kontakt.html"
+      - "saradnja.html"
+      - "kontakt-hvala.html"
+      - "saradnja-hvala.html"
+      - "politika-privatnosti.html"
+      - "assets/js/inquiry-forms.js"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
       - "assets/js/main.js"
@@ -22,6 +28,12 @@ on:
     branches: [main]
     paths:
       - "index.html"
+      - "kontakt.html"
+      - "saradnja.html"
+      - "kontakt-hvala.html"
+      - "saradnja-hvala.html"
+      - "politika-privatnosti.html"
+      - "assets/js/inquiry-forms.js"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
       - "assets/js/main.js"
@@ -74,6 +86,7 @@ jobs:
           node tests/local-delivery.mjs
           node tests/notification-outbox.mjs
           node tests/checkout-security.mjs
+          node tests/inquiry-security.mjs
 
       - name: Install isolated integration test dependencies
         run: |
@@ -86,12 +99,15 @@ jobs:
       - name: Cloudflare runtime and browser regressions
         run: |
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/cloudflare-runtime.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/inquiry-runtime.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/inquiry-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/local-delivery-browser.mjs
 
       - name: Validate JavaScript syntax
         run: |
           node --check worker/adriatic-trade-worker-v4.5.0.js
           node --check assets/js/admin.js
+          node --check assets/js/inquiry-forms.js
 
       - name: Validate release version and required bindings
         run: |
@@ -169,7 +185,7 @@ jobs:
           APPROVED_SHA: ${{ inputs.approved_sha }}
         run: bash scripts/check-worker-release.sh
 
-      - name: Deploy Worker v4.7.2
+      - name: Deploy Worker v4.8.0
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -180,9 +196,9 @@ jobs:
           for ATTEMPT in 1 2 3 4 5 6; do
             RESPONSE=$(curl --fail-with-body --silent --show-error \
               -H 'Cache-Control: no-cache' \
-              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.7.2-$ATTEMPT")
+              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.8.0-$ATTEMPT")
             printf '%s\n' "$RESPONSE"
-            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.7.2" and .database == true and .receipts == true and .security == true'; then
+            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.8.0" and .database == true and .receipts == true and .security == true and .inquiries == true'; then
               exit 0
             fi
             sleep 5
