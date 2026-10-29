@@ -14,6 +14,14 @@
   const filter=document.querySelector('[data-admin-filter]');
   const refresh=document.querySelector('[data-admin-refresh]');
   const alertBox=document.querySelector('[data-admin-alert]');
+  const inquiryList=document.querySelector('[data-inquiry-list]');
+  const inquiryFilter=document.querySelector('[data-inquiry-filter]');
+  const inquiryRefresh=document.querySelector('[data-inquiry-refresh]');
+  const inquiryWarning=document.querySelector('[data-inquiry-warning]');
+  const inquiryError=document.querySelector('[data-inquiry-error]');
+  const inquiryUpdated=document.querySelector('[data-inquiry-updated]');
+  let inquiries=[];
+  let inquiryRequest=0;
   let token=sessionStorage.getItem(KEY)||'';
   let orders=[];
   let selectedId='';
@@ -30,14 +38,16 @@
   async function api(path,options={}){
     const headers=new Headers(options.headers||{});
     headers.set('Authorization','Bearer '+token);
+    const requestToken=token;
     const res=await fetch(API+path,{...options,headers,credentials:'omit'});
     let data={};try{data=await res.json()}catch{}
-    if(res.status===401){sessionStorage.removeItem(KEY);token='';showLogin('Administratorski ključ nije prihvaćen.');throw new Error('Unauthorized')}
+    if(res.status===401){if(token===requestToken){sessionStorage.removeItem(KEY);token='';showLogin('Administratorski ključ nije prihvaćen.')}throw new Error('Unauthorized')}
     if(!res.ok||data.ok===false)throw new Error(data.error||'Greška pri komunikaciji sa serverom.');
     return data;
   }
 
   function showLogin(message=''){
+    resetInquiries();
     login.classList.remove('hidden');app.classList.add('hidden');logout.classList.add('hidden');
     loginError.textContent=message;loginError.classList.toggle('hidden',!message);
   }
@@ -47,6 +57,47 @@
     setTimeout(()=>alertBox.classList.add('hidden'),4500);
   }
   function setBusy(el,busy){if(!el)return;el.classList.toggle('admin-busy',busy);el.querySelectorAll?.('button,input,select').forEach(x=>x.disabled=busy)}
+
+  function resetInquiries(){
+    inquiryRequest++;inquiries=[];inquiryFilter.value='';inquiryRefresh.disabled=false;
+    inquiryList.innerHTML='';inquiryWarning.textContent='';inquiryWarning.classList.add('hidden');
+    inquiryError.textContent='';inquiryError.classList.add('hidden');
+    inquiryUpdated.textContent='Pregled još nije učitan.';
+    inquiryList.setAttribute('aria-busy','false');
+  }
+  function renderInquiries(){
+    const labels={pending:'Čeka slanje',sending:'Slanje u toku',sent:'Prihvaćeno za slanje',attention:'Zahteva proveru'};
+    const needsCheck=q=>q.status==='attention'||((q.status==='pending'||q.status==='sending')&&Date.now()-q.created_at>3600000);
+    const attentionCount=inquiries.filter(needsCheck).length;
+    inquiryWarning.textContent=attentionCount?`${attentionCount} upita zahteva proveru u Resend-u (u poslednjih 100), nezavisno od izabranog filtera. Proverite odmah; sadržaj se briše nakon 24 sata.`:'';
+    inquiryWarning.classList.toggle('hidden',!attentionCount);
+    const rows=inquiries.filter(q=>!inquiryFilter.value||q.status===inquiryFilter.value);
+    inquiryList.innerHTML=rows.length?`<table><caption>Prikazano ${rows.length} od ${inquiries.length} učitanih upita${inquiries.length===100?' — dostignut limit API-ja; stariji upiti nisu prikazani':''}.</caption><thead><tr><th scope="col">ID upita</th><th scope="col">Status</th><th scope="col">Primljeno (Beograd)</th><th scope="col">Pokušaji</th></tr></thead><tbody>${rows.map(q=>`<tr${needsCheck(q)?' class="inquiry-needs-check"':''}><td><code>${esc(q.id)}</code></td><td><strong>${labels[q.status]||'Nepoznat status — proverite'}</strong>${needsCheck(q)?'<br>⚠ Proverite u Resend-u':''}</td><td>${esc(dt(q.created_at))}</td><td>${esc(q.attempts)}</td></tr>`).join('')}</tbody></table>`:'<p class="admin-empty">Nema upita za izabrani filter.</p>';
+  }
+  async function loadInquiries(){
+    const request=++inquiryRequest;
+    inquiryRefresh.disabled=true;inquiryList.setAttribute('aria-busy','true');
+    inquiryError.classList.add('hidden');
+    inquiryUpdated.textContent='Učitavanje statusa upita...';
+    try{
+      const data=await api('/admin/inquiries',{cache:'no-store'});
+      if(request!==inquiryRequest||!token)return;
+      if(!Array.isArray(data.inquiries))throw new Error('Invalid inquiry response');
+      // Explicit allowlist: never retain or render sender fields or message content.
+      inquiries=data.inquiries.map(({id,status,created_at,attempts})=>({id,status,created_at,attempts}));
+      renderInquiries();
+      inquiryUpdated.textContent='Poslednje uspešno osvežavanje: '+dt(Date.now())+'.';
+    }catch{
+      if(request!==inquiryRequest||!token)return;
+      inquiries=[];inquiryList.innerHTML='';inquiryWarning.classList.add('hidden');
+      inquiryUpdated.textContent='Statusi upita nisu dostupni.';
+      inquiryError.textContent='Pregled upita nije učitan. Proverite vezu i kliknite „Osveži upite“. Isporuka nije potvrđena ovim pregledom.';
+      inquiryError.classList.remove('hidden');
+    }finally{
+      if(request===inquiryRequest){inquiryRefresh.disabled=false;inquiryList.setAttribute('aria-busy','false');}
+    }
+  }
+  async function loadPanel(){await Promise.all([loadOrders(true),loadInquiries()])}
 
   async function loadOrders(selectFirst=false){
     const params=new URLSearchParams();
@@ -379,11 +430,13 @@
     }catch(err){notify(err.message+' Sačuvani paket možete ponovo preuzeti iz istorije.');await loadOperationsOverview().catch(()=>{});}finally{btn.disabled=false;}
   });
 
-  loginForm.addEventListener('submit',async e=>{e.preventDefault();token=tokenInput.value.trim();if(!token)return;sessionStorage.setItem(KEY,token);showApp();await loadOrders(true)});
+  inquiryRefresh.addEventListener('click',()=>loadInquiries());
+  inquiryFilter.addEventListener('change',renderInquiries);
+  loginForm.addEventListener('submit',async e=>{e.preventDefault();token=tokenInput.value.trim();if(!token)return;sessionStorage.setItem(KEY,token);showApp();await loadPanel()});
   logout.addEventListener('click',()=>{sessionStorage.removeItem(KEY);token='';selectedId='';tokenInput.value='';showLogin()});
   refresh.addEventListener('click',()=>loadOrders());
   filter.addEventListener('change',()=>loadOrders());
   search.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(()=>loadOrders(),350)});
 
-  if(token){showApp();loadOrders(true)}else showLogin();
+  if(token){showApp();loadPanel()}else showLogin();
 })();

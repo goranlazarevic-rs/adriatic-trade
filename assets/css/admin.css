@@ -11,6 +11,7 @@
 
 
 /* Operations toolbar and detail forms */
+.admin-inquiries{margin-bottom:24px;min-width:0}.admin-inquiries h2{color:var(--navy)}.admin-inquiries .admin-toolbar{justify-content:flex-start}.admin-inquiries .admin-toolbar>.field{flex:initial}.admin-inquiry-table{overflow-x:auto}.admin-inquiry-table table{width:100%;min-width:640px;border-collapse:collapse;font-size:.85rem}.admin-inquiry-table caption{text-align:left;padding:12px 0;color:var(--muted)}.admin-inquiry-table th,.admin-inquiry-table td{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}.admin-inquiry-table code{overflow-wrap:anywhere}.inquiry-needs-check{background:#fff7e8;color:#6b4b18}
 .admin-toolbar{flex-wrap:wrap;align-items:end;gap:12px}
 .admin-toolbar>.field{min-width:140px;flex:1}
 .admin-box textarea{width:100%;box-sizing:border-box}

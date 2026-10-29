@@ -40,7 +40,22 @@ Izvori (provereni 28.10.2026.):
 
 Slanje ima lease od 90 s i Resend ključ `inquiry/<id>`, uz nepromenjen email payload tokom retry-a. Timeout email poziva je 20 s. Backoff raste do jednog sata. Posle 23 sata od prvog pokušaja nema automatskog slanja zbog Resend roka idempotentnosti od 24 sata. `attention` zahteva proveru u Resend-u pre bilo kog ručnog prosleđivanja. Sadržaj reda briše se po isteku 24 sata i kada slanje nije uspelo: ovo je nameran kompromis privatnosti, pa produžen kvar zahteva operativnu proveru, ne beskonačno čuvanje i retry.
 
-Autentifikovani `GET /admin/inquiries` koristi postojeći administratorski pristup i vraća poslednjih 100 ID-eva, vremena, broja pokušaja i statusa, bez sadržaja i podataka pošiljaoca. Prikaz nije dodat u admin UI. Primer provere u postojećem administratorskom alatu: pozvati ovu putanju sa postojećim Bearer tokenom; ne stavljati token u URL ili dokumente. U Resend-u pronaći ID iz subject-a/ključa. `pending` se proverava ako traje duže od uobičajenog backoff-a; `attention` zahteva ručnu proveru. Nema novog sistema alarmiranja.
+Autentifikovani `GET /admin/inquiries` koristi postojeći administratorski pristup i vraća poslednjih 100 ID-eva, vremena, broja pokušaja i statusa, bez sadržaja i podataka pošiljaoca. Ne stavljati token u URL ili dokumente.
+
+### Predlog admin pregleda — 29.10.2026. (čeka odobrenje objave)
+
+U postojećem `admin.html` dodata je sekcija „Isporuka kontakt i B2B upita“. Učitava se nezavisno od porudžbina pri otvaranju autentifikovanog panela, uz dugme „Osveži upite“, filter statusa i vreme poslednjeg uspešnog osvežavanja (Europe/Belgrade). Greška API-ja uklanja stare rezultate i prikazuje jasno obaveštenje; ne sprečava rad sa porudžbinama. Odjava briše pregled i ignoriše zakasnele odgovore.
+
+| API status | Oznaka u panelu | Postupanje |
+| --- | --- | --- |
+| `pending` | Čeka slanje | Ako od prijema prođe više od jednog sata, proveriti Resend i rad reda/cron-a. To je prag upozorenja panela, ne promena retry politike. |
+| `sending` | Slanje u toku | Ista provera ako od prijema prođe više od jednog sata. |
+| `sent` | Prihvaćeno za slanje | Resend je prihvatio poruku; ovo nije potvrda dostave u inbox. |
+| `attention` | Zahteva proveru | Odmah proveriti Resend po ID-u iz subject-a/ključa pre bilo kog ručnog prosleđivanja. |
+
+Upozorenje broji sve problematične upite u učitanih 100, nezavisno od izabranog filtera. API ne vraća tip forme, pa su kontakt i B2B zajedno; nema izmišljenog razvrstavanja. Ograničenje na poslednjih 100 i evidenciju do sedam dana je vidljivo: ovo nije potpun istorijski pregled pri većem obimu. Sadržaj neisporučenih upita i dalje se briše nakon 24 sata. Nema automatskog osvežavanja, zasebnih obaveštenja niti komandi za slanje/retry u ovoj sekciji. Panel koristi samo postojeći zaštićeni GET; Worker, red slanja i porudžbine nisu menjani.
+
+Objava ove izmene zahteva odobrenje za merge i GitHub Pages. Novi Worker deploy, D1 migracija i nove tajne nisu potrebni.
 
 Email ide samo na `info@adriatictrade.rs`, iz postojećeg verifikovanog `FROM_EMAIL`; adresa pošiljaoca je samo `reply_to`. Nema autoresponder-a ka proizvoljnoj adresi. Poruka je plain text, bez izvršavanja HTML-a iz korisničkog sadržaja. Prihvatanje od Resend-a nije potvrda isporuke u inbox; stvarna dostava i spam pravila sandučeta ostaju zasebna provera.
 
@@ -67,6 +82,7 @@ Rollback se planira za oba dela: vratiti prethodni Pages frontend i, samo uz odo
 - `node tests/inquiry-security.mjs`: validacija, saglasnost, injection, stream limit, configuration/D1 fail-closed, potpis/vreme ticketa, Turnstile action/hostname/expiry/replay odgovor, oba limita i konkurentnost, deduplikacija, lease/retry, rokovi i privatni statusni API.
 - `MINIFLARE_MODULE_PATH=<miniflare> node tests/inquiry-runtime.mjs`: stvarni lokalni workerd/D1, konkurentni limit 5/8, Siteverify kvar, trajni red, cron retry, isti email ključevi i brisanje sadržaja.
 - `PLAYWRIGHT_MODULE_PATH=<playwright> node tests/inquiry-browser.mjs`: desktop/mobilni obe forme, HTML validacija i saglasnost, greške i neispravan JSON, 429, izgubljena potvrda, retry, kvar zaštite, JavaScript isključen. Svi HTTP pozivi se presreću lokalno.
+- `PLAYWRIGHT_MODULE_PATH=<playwright> node tests/admin-inquiries-browser.mjs`: stvarni admin UI i postojeći autentifikovani API nad izolovanim SQLite-om na 1440/390 px; statusi, vremena, pokušaji, filteri, upozorenja nezavisna od filtera, osvežavanje i oporavak, offline/503/neispravan odgovor/401, prazno stanje i limit 100, privatnost/XSS, odjava sa zahtevom u toku i očuvani detalji porudžbine. Bez produkcionih poziva i slanja poruka; uključeno u CI.
 - Postojeći admin, naplata, porudžbine, outbox, Cloudflare runtime, browser i release-gate testovi ostaju u CI-u.
 
 Nijedan test ne šalje stvarne poruke. Produkcioni Turnstile i stvarna inbox dostava nisu testirani ovim sintetičkim testovima.
