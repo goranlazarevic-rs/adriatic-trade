@@ -83,6 +83,7 @@ jobs:
       - name: Regression tests
         run: |
           node tests/admin-operations.mjs
+          node tests/fiscal-manual-workflow.mjs
           node tests/local-delivery.mjs
           node tests/notification-outbox.mjs
           node tests/checkout-security.mjs
