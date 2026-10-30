@@ -102,6 +102,7 @@ jobs:
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/inquiry-runtime.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/inquiry-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/local-delivery-browser.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/admin-inquiries-browser.mjs
 
       - name: Validate JavaScript syntax
         run: |

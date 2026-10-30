@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Porudžbine | Adriatic Trade</title>
+  <title>Administracija | Adriatic Trade</title>
   <meta name="robots" content="noindex,nofollow,noarchive">
   <link rel="icon" href="/assets/img/favicon.png">
   <link rel="stylesheet" href="/assets/css/style.css?v=3.8.2">
-  <link rel="stylesheet" href="/assets/css/admin.css?v=1.4.0">
+  <link rel="stylesheet" href="/assets/css/admin.css?v=1.5.0">
 </head>
 <body class="admin-body">
   <header class="admin-header">
@@ -17,7 +17,7 @@
       </a>
       <div>
         <div class="admin-kicker">INTERNI PANEL</div>
-        <h1>Porudžbine</h1>
+        <h1>Porudžbine i upiti</h1>
       </div>
       <button class="btn btn-secondary btn-small hidden" type="button" data-admin-logout>Odjavi se</button>
     </div>
@@ -41,6 +41,28 @@
     </section>
 
     <section class="admin-app hidden" data-admin-app>
+      <section class="admin-box admin-inquiries" aria-labelledby="inquiries-heading">
+        <h2 id="inquiries-heading">Isporuka kontakt i B2B upita</h2>
+        <p>Poslednjih 100 upita iz evidencije do sedam dana, bez podataka pošiljalaca. „Prihvaćeno za slanje“ znači da je Resend prihvatio poruku; ne potvrđuje prijem u inbox.</p>
+        <div class="admin-toolbar">
+          <div class="field">
+            <label for="inquiry-status">Status upita</label>
+            <select id="inquiry-status" data-inquiry-filter>
+              <option value="">Svi statusi</option>
+              <option value="attention">Zahteva proveru</option>
+              <option value="pending">Čeka slanje</option>
+              <option value="sending">Slanje u toku</option>
+              <option value="sent">Prihvaćeno za slanje</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary" type="button" data-inquiry-refresh>Osveži upite</button>
+        </div>
+        <p data-inquiry-updated role="status">Pregled još nije učitan.</p>
+        <div class="admin-security-warning hidden" data-inquiry-warning role="alert"></div>
+        <div class="admin-error hidden" data-inquiry-error role="alert"></div>
+        <p>Sadržaj neisporučenih upita briše se nakon 24 sata. Za status „Zahteva proveru“ i čekanje duže od jednog sata proverite Resend po ID-u upita pre bilo kog ručnog prosleđivanja, zbog mogućih duplikata. Panel ne šalje poruke. Podaci se osvežavaju pri otvaranju panela i dugmetom.</p>
+        <div class="admin-inquiry-table" data-inquiry-list></div>
+      </section>
       <div class="admin-toolbar">
         <div class="admin-toolbar-fields">
           <div class="field admin-search">
@@ -89,6 +111,6 @@
     </section>
   </main>
 
-  <script src="/assets/js/admin.js?v=4.7.2"></script>
+  <script src="/assets/js/admin.js?v=4.8.1"></script>
 </body>
 </html>
