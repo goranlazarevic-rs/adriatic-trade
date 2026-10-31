@@ -38,7 +38,9 @@ try {
     assert.equal(lab.row(id).payment,'unpaid');await action('delivered');await action('payment');await action('remittance');
     assert.equal(lab.row(id).remittance,'received');await page.reload();
     await page.getByRole('button',{name:id,exact:true}).click();
-    assert.equal(await page.locator('body').evaluate(el=>el.scrollWidth<=window.innerWidth),true);
+    const overflow=await page.evaluate(()=>({width:window.innerWidth,body:document.body.scrollWidth,
+      elements:[...document.querySelectorAll('main *')].filter(el=>el.getBoundingClientRect().right>window.innerWidth+1).slice(0,8).map(el=>({tag:el.tagName,className:el.className,right:el.getBoundingClientRect().right}))}));
+    assert.ok(overflow.body<=overflow.width,JSON.stringify(overflow));
     assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await page.close();
     console.log(`PASS: integration lab ${width}px; timeout/reconciliation, PDF download, email retry, courier and money; zero external requests`);
   }
