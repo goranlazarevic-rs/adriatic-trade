@@ -20,6 +20,12 @@ Tajne čuvati u Worker okruženju. Zahteve potpisivati/proveravati po specifikac
 
 Fiskalni, platni i isporučni statusi su odvojeni. Otkazivanje ili povraćaj pošiljke ne znači automatski fiskalnu refundaciju. Ponovna štampa ne kreira novu pošiljku ili fiskalni račun.
 
+## Minimax početak rada
+
+Praktični postupak, preduslovi, sintetički primeri i plan API povezivanja nalaze se u [MINIMAX-WEBSHOP-OPERATIVA.md](MINIMAX-WEBSHOP-OPERATIVA.md). Za početak je predviđeno ručno izdavanje u Minimax ESIR-u i povezivanje konačnog PFR broja/PDF-a u panelu. Avanse i refundacije slati iz Minimax-a i pratiti u odvojenom registru jer panel čuva jedan PDF. Nema aktivnog fiskalnog adaptera; `linked` ne potvrđuje autentičnost računa. Jedinstvenost ručno unetog broja i obaveznost PDF-a pre otpreme kontroliše operater. API izdavanje ne aktivirati bez testirane obrade neizvesnog ishoda i zaštite od duplikata.
+
+`node tests/fiscal-manual-workflow.mjs` proverava postojeći ručni tok u izolaciji, sa sintetičkim PDF-ovima i mrežnim odgovorima, bez pristupa Minimax-u ili PFR-u.
+
 ## Provera
 
 `node tests/admin-operations.mjs` proverava dozvoljene promene, naplatu/refundaciju, konflikt konkurentnih izmena, istoriju, očuvanje cena i datumske filtere. Sintaksne provere: admin.js i Worker. Fizička štampa i provajderski API zahtevaju konkretan uređaj/izabranog provajdera.
