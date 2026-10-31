@@ -1,0 +1,3 @@
+# Local integration laboratory data only
+.integration-lab*.sqlite
+.integration-lab*.sqlite-*

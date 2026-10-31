@@ -23,3 +23,8 @@ Fiskalni, platni i isporučni statusi su odvojeni. Otkazivanje ili povraćaj po�
 ## Provera
 
 `node tests/admin-operations.mjs` proverava dozvoljene promene, naplatu/refundaciju, konflikt konkurentnih izmena, istoriju, očuvanje cena i datumske filtere. Sintaksne provere: admin.js i Worker. Fizička štampa i provajderski API zahtevaju konkretan uređaj/izabranog provajdera.
+
+
+## Izolovana razvojna proba
+
+[Koraci za probni panel i naredne integracije](INTEGRATION-LAB-KORACI.md). Pokretanje: `node tools/integration-lab/server.mjs`; testovi: `node tests/integration-lab.mjs`. Koristi isključivo fiksne sintetičke porudžbine i lokalne simulatore. Nije povezano sa produkcionim Workerom, Minimax API-jem ili kurirom.

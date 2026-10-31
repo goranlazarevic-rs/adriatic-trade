@@ -17,6 +17,7 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "tools/integration-lab/**"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "admin.html"
@@ -39,6 +40,7 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "tools/integration-lab/**"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "admin.html"
@@ -82,6 +84,7 @@ jobs:
 
       - name: Regression tests
         run: |
+          node tests/integration-lab.mjs
           node tests/admin-operations.mjs
           node tests/local-delivery.mjs
           node tests/notification-outbox.mjs
@@ -98,6 +101,7 @@ jobs:
 
       - name: Cloudflare runtime and browser regressions
         run: |
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/integration-lab-browser.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/cloudflare-runtime.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/inquiry-runtime.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/inquiry-browser.mjs
