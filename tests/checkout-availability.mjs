@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import {harness} from './helpers/local-delivery-harness.mjs';
 
 const migration=fs.readFileSync('cloudflare-d1-checkout-availability-v1.sql','utf8');
@@ -75,6 +76,8 @@ test('pausing, stock deletion and exhausted quota do not block retrieval of an a
 test('same ID with changed items or customer is a conflict; saved totals survive catalog/price tampering',async()=>{
  const h=setup(),b=body();assert.equal((await call(h,b)).status,201);
  for(const change of [b=>b.items[0].qty=2,b=>b.customer.email='other@example.com',b=>b.delivery.note='changed']){const changed=structuredClone(b);change(changed);const r=await call(h,changed);assert.equal(r.status,409);assert.equal((await r.json()).code,'SUBMISSION_CONFLICT');}
+ vm.runInContext('PRODUCTS["10306"].price=999',h.ctx);
+ const retry=await call(h,b);assert.equal(retry.status,200);assert.equal((await retry.json()).total,719);
  assert.equal(remaining(h),19);assert.equal(h.state.emails.length,2);
 });
 test('gate or quantity changed immediately before commit is checked again inside the transaction',async()=>{

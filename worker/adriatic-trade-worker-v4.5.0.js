@@ -264,7 +264,7 @@ async function handleCreateOrder(request, env, origin) {
     }
     if (existing) {
       if (orderRequestKey(existing) !== orderRequestKey(order)) {
-        return json({ok:false,code:"SUBMISSION_CONFLICT",error:"Identifikator već pripada drugoj porudžbini. Osvežite porudžbinu pre novog slanja."},409,origin);
+        return json({ok:false,code:"SUBMISSION_CONFLICT",error:"Porudžbina sa ovim identifikatorom već postoji sa drugim podacima. Kontaktirajte nas radi provere."},409,origin);
       }
       order = existing;
       duplicate = true;
@@ -1086,7 +1086,7 @@ function orderRequestKey(order) {
 }
 
 function intakeError(origin) {
-  return json({ok:false,code:"INTAKE_UNAVAILABLE",error:"Prijem novih porudžbina trenutno nije dostupan. Kontakt i poslovni upiti su dostupni."},503,origin);
+  return json({ok:false,code:"INTAKE_UNAVAILABLE",error:"Prijem novih porudžbina trenutno nije dostupan. Za pomoć koristite kontakt podatke na sajtu."},503,origin);
 }
 
 // This diagnostic read is only for the response message after a failed batch.
