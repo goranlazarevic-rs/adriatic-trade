@@ -16,6 +16,7 @@ assert.deepEqual(workflow.on.pull_request.paths, workflow.on.push.paths);
 for(const file of ['checkout.html','kontakt.html','saradnja.html','kontakt-hvala.html','saradnja-hvala.html','politika-privatnosti.html','assets/js/inquiry-forms.js'])assert.ok(workflow.on.pull_request.paths.includes(file),file);
 for(const file of ['tests/inquiry-security.mjs','tests/inquiry-runtime.mjs','tests/inquiry-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
 assert.ok(workflow.on.pull_request.paths.includes('scripts/check-worker-release.sh'));
+assert.ok(workflow.on.pull_request.paths.includes('cloudflare-d1-checkout-availability-v1.sql'));
 assert.deepEqual(workflow.on.pull_request.branches, ['main']);
 assert.deepEqual(workflow.on.push.branches, ['main']);
 assert.equal(inputs.deploy_production.type, 'boolean');
@@ -57,7 +58,7 @@ const uploadStep = deploy.steps.findIndex(step => step.run?.includes('wrangler@4
 assert.ok(checks[0] < secretStep);
 assert.equal(checks[1], uploadStep - 1);
 for (const i of checks) assert.equal(deploy.steps[i].env.APPROVED_SHA, '${{ inputs.approved_sha }}');
-for (const command of ['admin-operations.mjs', 'local-delivery.mjs', 'notification-outbox.mjs', 'checkout-security.mjs', 'cloudflare-runtime.mjs', 'local-delivery-browser.mjs', 'release-gate.mjs']) {
+for (const command of ['admin-operations.mjs', 'local-delivery.mjs', 'notification-outbox.mjs', 'checkout-security.mjs', 'checkout-availability.mjs', 'checkout-availability-runtime.mjs', 'cloudflare-runtime.mjs', 'local-delivery-browser.mjs', 'release-gate.mjs']) {
   assert.ok(validate.steps.some(step => step.run?.includes(command)), command);
 }
 assert.ok(deploy.steps.some(step => step.name === 'Verify production Worker'));
