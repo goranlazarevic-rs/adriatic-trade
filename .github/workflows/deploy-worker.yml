@@ -19,6 +19,7 @@ on:
       - "tests/**"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
+      - "cloudflare-d1-checkout-availability-v1.sql"
       - "admin.html"
       - "checkout.html"
       - "dostava-placanje.html"
@@ -41,6 +42,7 @@ on:
       - "tests/**"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
+      - "cloudflare-d1-checkout-availability-v1.sql"
       - "admin.html"
       - "checkout.html"
       - "dostava-placanje.html"
@@ -86,6 +88,7 @@ jobs:
           node tests/local-delivery.mjs
           node tests/notification-outbox.mjs
           node tests/checkout-security.mjs
+          node tests/checkout-availability.mjs
           node tests/inquiry-security.mjs
 
       - name: Install isolated integration test dependencies
@@ -99,6 +102,7 @@ jobs:
       - name: Cloudflare runtime and browser regressions
         run: |
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/cloudflare-runtime.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/checkout-availability-runtime.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/inquiry-runtime.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/inquiry-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/local-delivery-browser.mjs
@@ -186,7 +190,7 @@ jobs:
           APPROVED_SHA: ${{ inputs.approved_sha }}
         run: bash scripts/check-worker-release.sh
 
-      - name: Deploy Worker v4.8.0
+      - name: Deploy Worker v4.9.0
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -197,9 +201,9 @@ jobs:
           for ATTEMPT in 1 2 3 4 5 6; do
             RESPONSE=$(curl --fail-with-body --silent --show-error \
               -H 'Cache-Control: no-cache' \
-              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.8.0-$ATTEMPT")
+              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.9.0-$ATTEMPT")
             printf '%s\n' "$RESPONSE"
-            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.8.0" and .database == true and .receipts == true and .security == true and .inquiries == true'; then
+            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.9.0" and .database == true and .receipts == true and .security == true and .inquiries == true'; then
               exit 0
             fi
             sleep 5

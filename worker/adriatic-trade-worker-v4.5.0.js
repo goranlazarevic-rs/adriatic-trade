@@ -118,7 +118,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.8.0",
+        version: "4.9.0",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -235,52 +235,46 @@ async function handleCreateOrder(request, env, origin) {
     );
   }
 
-  const securityFlags = getClientRiskFlags(validation.data.customer.email, body?.security?.startedAt);
-  if (env.DB) {
-    securityFlags.push(...await getVelocityRiskFlags(env.DB, validation.data.customer.email, validation.data.customer.phone));
-  }
-
+  // A stored submission is the only safe authority for retries. Never fall back
+  // to accepting an email-only order when the admission database is unavailable.
+  if (!env.DB) return intakeError(origin);
   let order = buildOrder(validation.data);
-  order.securityFlags = [...new Set(securityFlags)];
   let duplicate = false;
   let stored = false;
   let emailState = { business: false, customer: false };
-
-  if (env.DB) {
-    try {
-      const existing = await getOrderBySubmissionId(env.DB, order.submissionId);
-      if (existing) {
-        order = existing;
-        duplicate = true;
-        stored = true;
-        emailState.business = Boolean(existing.businessEmailSent);
-        emailState.customer = Boolean(existing.customerEmailSent);
-      } else {
-        try {
-          await insertOrder(env.DB, order);
-          await addOrderEvent(env.DB, order.id, "created", "Porudžbina je kreirana preko web sajta.");
-          if (order.securityFlags.length) {
-            await addOrderEvent(env.DB, order.id, "security_flag", `Bezbednosni signal: ${order.securityFlags.join("; ")}`);
-          }
-          stored = true;
-        } catch (error) {
-          // A near-simultaneous duplicate can hit the UNIQUE submission_id constraint.
-          const raced = await getOrderBySubmissionId(env.DB, order.submissionId);
-          if (raced) {
-            order = raced;
-            duplicate = true;
-            stored = true;
-            emailState.business = Boolean(raced.businessEmailSent);
-            emailState.customer = Boolean(raced.customerEmailSent);
-          } else {
-            throw error;
-          }
+  try {
+    let existing = await getOrderBySubmissionId(env.DB, order.submissionId);
+    if (!existing) {
+      order.securityFlags = [...new Set([
+        ...getClientRiskFlags(validation.data.customer.email, body?.security?.startedAt),
+        ...await getVelocityRiskFlags(env.DB, validation.data.customer.email, validation.data.customer.phone)
+      ])];
+      try {
+        await admitOrder(env.DB, order);
+      } catch (error) {
+        // The entire batch rolls back on rejection or a racing duplicate. A lost
+        // response after commit can also be recovered by this durable lookup.
+        existing = await getOrderBySubmissionId(env.DB, order.submissionId);
+        if (!existing) {
+          const rejection = await orderAvailability(env.DB, order.items);
+          if (rejection) return json({ok:false, ...rejection.body}, rejection.status, origin);
+          throw error;
         }
       }
-    } catch (error) {
-      // Keep checkout operational even if D1 is temporarily unavailable.
-      console.error("D1 create/read failed; continuing email-only", error);
     }
+    if (existing) {
+      if (orderRequestKey(existing) !== orderRequestKey(order)) {
+        return json({ok:false,code:"SUBMISSION_CONFLICT",error:"Porudžbina sa ovim identifikatorom već postoji sa drugim podacima. Kontaktirajte nas radi provere."},409,origin);
+      }
+      order = existing;
+      duplicate = true;
+      emailState.business = Boolean(existing.businessEmailSent);
+      emailState.customer = Boolean(existing.customerEmailSent);
+    }
+    stored = true;
+  } catch (error) {
+    console.error("Order admission unavailable");
+    return intakeError(origin);
   }
 
   if (!emailState.business) {
@@ -1046,9 +1040,9 @@ function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
-async function insertOrder(db, order) {
+function orderInsertStatement(db, order) {
   const now = order.createdAt;
-  await db.prepare(`INSERT INTO orders (
+  return db.prepare(`INSERT INTO orders (
     id, submission_id, created_at, updated_at, status,
     customer_first_name, customer_last_name, customer_email, customer_phone,
     delivery_method, address, postal_code, city, note, payment,
@@ -1060,7 +1054,75 @@ async function insertOrder(db, order) {
       order.delivery.method, order.delivery.address || null, order.delivery.postalCode, order.delivery.city,
       order.delivery.note || null, order.payment,
       JSON.stringify(order.items), order.goodsTotal, order.shipping, order.total
-    ).run();
+    );
+}
+
+async function insertOrder(db, order) {
+  await orderInsertStatement(db, order).run();
+}
+
+// Bundles consume the same physical units as individual products. Never accept
+// browser-supplied bundle contents or stock quantities.
+const BUNDLE_COMPONENTS = {
+  "PKT-PROBA": {"10086":1,"10306":1,"10307":1},
+  "PKT-GURMAN": {"10240":1,"10306":1,"10307":1,"10086":1},
+  "PKT-KOMPLET": {"10240":1,"10012":1,"10086":1}
+};
+
+function stockRequirements(items) {
+  const required = new Map();
+  for (const {sku,qty} of items) {
+    for (const [component,units] of Object.entries(Object.hasOwn(BUNDLE_COMPONENTS,sku) ? BUNDLE_COMPONENTS[sku] : {[sku]:1})) {
+      required.set(component, (required.get(component) || 0) + qty * units);
+    }
+  }
+  return [...required].sort(([a],[b])=>a.localeCompare(b)).map(([sku,qty])=>({sku,qty}));
+}
+
+function orderRequestKey(order) {
+  const c=order.customer,d=order.delivery;
+  return JSON.stringify([c.firstName,c.lastName,c.email,c.phone,d.method,d.address||"",d.postalCode,d.city,d.note||"",
+    order.items.map(({sku,qty})=>[sku,qty]).sort(([a],[b])=>a.localeCompare(b))]);
+}
+
+function intakeError(origin) {
+  return json({ok:false,code:"INTAKE_UNAVAILABLE",error:"Prijem novih porudžbina trenutno nije dostupan. Za pomoć koristite kontakt podatke na sajtu."},503,origin);
+}
+
+// This diagnostic read is only for the response message after a failed batch.
+// Admission itself always evaluates the conditions inside the write transaction.
+async function orderAvailability(db, items) {
+  const gate=await db.prepare("SELECT mode FROM checkout_intake WHERE id=1").first();
+  if (gate?.mode !== "open") return {status:503,body:{code:"SALES_PAUSED",error:"Internet prodaja je privremeno pauzirana. Kontakt i poslovni upiti su dostupni."}};
+  const rows=await db.prepare("SELECT sku,state,remaining FROM checkout_stock").all();
+  const bySku=new Map((rows.results||[]).map(row=>[row.sku,row]));
+  for (const {sku,qty} of stockRequirements(items)) {
+    const row=bySku.get(sku);
+    if (!row || row.state==="unknown" || row.remaining===null) return {status:503,body:{code:"STOCK_UNKNOWN",error:"Raspoloživost jednog ili više proizvoda trenutno nije potvrđena. Pokušajte kasnije ili nas kontaktirajte."}};
+    if (row.state!=="available" || row.remaining<qty) return {status:409,body:{code:"PRODUCT_UNAVAILABLE",error:"Jedan ili više proizvoda nisu dostupni u traženoj količini. Izmenite korpu ili nas kontaktirajte."}};
+  }
+  return null;
+}
+
+async function admitOrder(db, order) {
+  const required=stockRequirements(order.items), requirements=JSON.stringify(required);
+  // The CHECK guard forces a rollback, rather than silently skipping the insert.
+  // D1 batch serializes all checks, quota debits, order and audit inserts. A UNIQUE
+  // submission_id failure rolls back every debit, including simultaneous retries.
+  const guard=db.prepare(`INSERT INTO checkout_admissions(submission_id,requirements_json,created_at,admitted)
+    VALUES (?,?,?,CASE WHEN EXISTS(SELECT 1 FROM checkout_intake WHERE id=1 AND mode='open')
+      AND NOT EXISTS(SELECT 1 FROM json_each(?) r LEFT JOIN checkout_stock s ON s.sku=json_extract(r.value,'$.sku')
+        WHERE s.sku IS NULL OR s.state!='available' OR s.remaining IS NULL OR s.remaining<json_extract(r.value,'$.qty'))
+      THEN 1 ELSE 0 END)`).bind(order.submissionId,requirements,order.createdAt,requirements);
+  const statements=[guard,
+    ...required.map(({sku,qty})=>db.prepare("UPDATE checkout_stock SET remaining=remaining-?,updated_at=? WHERE sku=?").bind(qty,order.createdAt,sku)),
+    orderInsertStatement(db,order),
+    db.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES (?,'created',?,?)")
+      .bind(order.id,"Porudžbina primljena uz serversku proveru i izdvajanje prodajne kvote.",order.createdAt)
+  ];
+  if (order.securityFlags?.length) statements.push(db.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES (?,'security_flag',?,?)")
+    .bind(order.id,`Bezbednosni signal: ${order.securityFlags.join("; ")}`,order.createdAt));
+  await db.batch(statements);
 }
 
 async function getOrderBySubmissionId(db, submissionId) {
@@ -1777,7 +1839,7 @@ function validateOrder(body) {
   for (const raw of body.items) {
     const sku = clean(raw?.sku, 30);
     const qty = Number(raw?.qty);
-    if (!PRODUCTS[sku]) return fail("Korpa sadrži nepoznat proizvod.");
+    if (!Object.hasOwn(PRODUCTS,sku)) return fail("Korpa sadrži nepoznat proizvod.");
     if (!Number.isInteger(qty) || qty < 1 || qty > 10) return fail("Količina proizvoda nije ispravna.");
     merged.set(sku, (merged.get(sku) || 0) + qty);
   }

@@ -32,6 +32,9 @@ try{
  console.log('PASS workerd: actual D1 batch, JSON merges, R2 PDF upload/download, email outage/idempotent retry, local payment/delivery');
  const second='AT-20261010-ROLLBACK';await seed(second);await get(second);await db.prepare("CREATE TRIGGER fail_queue BEFORE INSERT ON notification_outbox BEGIN SELECT RAISE(ABORT,'synthetic rollback'); END").run();const sent=emails.length;assert.equal((await call(second,'confirm',{})).status,500);assert.equal((await get(second)).status,'new');assert.equal(emails.length,sent);await db.prepare('DROP TRIGGER fail_queue').run();
  console.log('PASS workerd: failed outbox insert rolls back the status and audit event, no email');
+ for(const statement of fs.readFileSync('cloudflare-d1-checkout-availability-v1.sql','utf8').split(';').filter(x=>x.trim()))await db.prepare(statement).run();
+ await db.prepare("UPDATE checkout_intake SET mode='open' WHERE id=1").run();
+ await db.prepare("INSERT INTO checkout_stock(sku,state,remaining,updated_at,reason) VALUES ('10306','available',100,'2099-01-01','SYNTHETIC TEST ONLY')").run();
  const customer={firstName:'Test',lastName:'Kupac',email:'test@example.com',phone:'060000000'};
  const responses=await Promise.all(Array.from({length:8},(_,i)=>mf.dispatchFetch('https://test/order',{method:'POST',headers:{Origin:'https://adriatictrade.rs','Content-Type':'application/json','CF-Connecting-IP':'192.0.2.99'},body:JSON.stringify({submissionId:'runtime-checkout-'+i,customer,delivery:{method:'Dostava na adresu',address:'Test 1',postalCode:'21000',city:'Novi Sad'},items:[{sku:'10306',qty:1}],security:{turnstileToken:'synthetic',website:''}})})));
  console.log('Runtime checkout statuses:',responses.map(r=>r.status));assert.equal(responses.filter(r=>r.status===201).length,5);assert.equal(responses.filter(r=>r.status===429).length,3);assert.equal((await db.prepare('SELECT COUNT(*) n FROM security_order_attempts').first()).n,5);
