@@ -39,7 +39,7 @@ function provider({onCreate, onRead, tokenStatus = 200, tokenBody, onFetch, pric
       assert.equal(url, 'https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices');
       const p = JSON.parse(options.body); made.push(p);
       if (onCreate) return onCreate(p);
-      return new Response(null, {status: 201, headers: {Location: `https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/${ID}`}});
+      return new Response(null, {status: 201, headers: {Location: `https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/${ID}?id=${ID}`}});
     }
     if (url.includes('currentuser/orgs')) return Response.json(orgBody ?? {Rows: [{Organisation: {ID: 81179}, APIAccess: 'D'}]});
     if (url.includes('/items/pricelists')) return Response.json(pricesBody ?? prices());
@@ -150,6 +150,15 @@ test('OAuth has four independent credentials, form encoding and one login attemp
   await assert.rejects(()=>h.client.login(),/LOGIN_ALREADY_ATTEMPTED/);
   assert.equal(h.calls.length,1);h.client.close();
 });
+test('documented Location query id must match the path; duplicate/foreign parameters fail closed', () => {
+  for (const prefix of ['/api/orgs/81179/issuedinvoices/', 'https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/']) {
+    assert.equal(invoiceIdFromLocation(`${prefix}${ID}?id=${ID}`),ID);
+    for (const query of [`id=${ID+1}`,`id=${ID}&id=${ID}`,`id=${ID}&token=bad`,
+      `organisationId=81179&id=${ID}`,`id=0${ID}`,'id=']) {
+      assert.throws(()=>invoiceIdFromLocation(`${prefix}${ID}?${query}`),/UNEXPECTED_CREATE_LOCATION/);
+    }
+  }
+});
 test('bad login is never retried and provider response does not leak secrets', async () => {
   const h=provider({tokenStatus:400,tokenBody:{error:'invalid_grant',password:credentials().password}});
   await assert.rejects(()=>h.client.login(),error=>{
@@ -184,6 +193,8 @@ test('live-shaped round trip creates one draft and a second launch reads it only
   const h=provider();let journal=openJournal(dir);
   const result=await runProbe({client:h.client,journal,day:DAY});journal.close();
   assert.deepEqual(result,{id:ID,total:2968,status:'O',reused:false});assert.equal(h.made.length,1);
+  const readback=h.calls.find(c=>c.options.method==='GET' && c.url.endsWith(`/issuedinvoices/${ID}`));
+  assert.equal(readback.url,`https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/${ID}`);
   const h2=provider();journal=openJournal(dir);
   const again=await runProbe({client:h2.client,journal,day:'2026-11-03'});journal.close();
   assert.equal(again.reused,true);assert.equal(h2.made.length,0);
@@ -223,6 +234,14 @@ test('missing Location leaves unknown outcome and no repeated POST',async()=>inJ
   const h=provider({onCreate:()=>new Response(null,{status:201})});const journal=openJournal(dir);
   await assert.rejects(()=>runProbe({client:h.client,journal,day:DAY}),/CREATE_LOCATION_MISSING/);
   assert.equal(journal.read().status,'sending');journal.close();
+}));
+test('mismatching Location query preserves uncertain state and never reads an unrelated invoice',async()=>inJournal(async dir=>{
+  const h=provider({onCreate:()=>new Response(null,{status:201,headers:{Location:`https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/${ID}?id=${ID+1}`}})});
+  const journal=openJournal(dir);
+  await assert.rejects(()=>runProbe({client:h.client,journal,day:DAY}),/UNEXPECTED_CREATE_LOCATION/);
+  assert.equal(journal.read().status,'sending');assert.equal(h.made.length,1);
+  assert.ok(!h.calls.some(c=>c.options.method==='GET' && c.url.includes(`/issuedinvoices/${ID}`)));
+  journal.close();
 }));
 test('ID persisted before failed readback; rerun GET verifies same ID without POST',async()=>inJournal(async dir=>{
   const h=provider({onRead:async id=>id===ID?new Response(null,{status:503}):null});let journal=openJournal(dir);

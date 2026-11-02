@@ -12,6 +12,16 @@ obuke numeracije 1428454-1. API odgovor referentnog nacrta **24955965** pokazuje
 šest stavki sa POPDV 3.2, cene sa PDV-om, kasira i probno plaćanje Tekući račun.
 Taj odgovor služi proveri mapiranja, ne kao telo novog POST zahteva.
 
+Stvarna proba 2.11.2026. kreirala je nacrt **24994201** sa 2968 RSD. Prva
+verzija parsera odbila je Location odgovor, pa je korisnik opcijom 3 uspešno
+proverio postojeći nacrt bez novog POST-a. Naknadno je u zvaničnom primeru
+Minimax dokumentacije potvrđen format `/issuedinvoices/ID?id=ID`. Parser sada
+prihvata taj dodatni parametar samo kada se poklapa sa ID-em u putanji. Ne
+prati vraćeni URL; koristi sopstvenu HTTPS GET adresu za istu organizaciju.
+Sirovo zaglavlje korisnikovog prvog pokušaja nije sačuvano, tako da nije
+nezavisno potvrđeno da je konkretan odgovor imao baš taj oblik. Podrška tom
+dokumentovanom obliku proverava se bez novog stvarnog kreiranja.
+
 | Šifra | Minimax ItemId | Cena sa PDV-om, RSD |
 |---|---:|---:|
 | 10086 | 13473518 | 600 |

@@ -25,7 +25,7 @@ globalThis.fetch = async (url, options) => {
   })),ValidationMessages:[]});
   if (options.method === 'POST' && parsed.pathname === '/RS/API/api/orgs/81179/issuedinvoices') {
     if (JSON.stringify(JSON.parse(options.body)) !== JSON.stringify(draft)) throw Error('Synthetic draft mismatch');
-    return new Response(null,{status:201,headers:{Location:`https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/${ID}`}});
+    return new Response(null,{status:201,headers:{Location:`https://moj.minimax.rs/RS/API/api/orgs/81179/issuedinvoices/${ID}?id=${ID}`}});
   }
   if (options.method === 'GET' && [CONFIG.referenceInvoiceId,ID].some(id=>parsed.pathname===`/RS/API/api/orgs/81179/issuedinvoices/${id}`)) {
     return Response.json(actual(Number(parsed.pathname.split('/').at(-1))));

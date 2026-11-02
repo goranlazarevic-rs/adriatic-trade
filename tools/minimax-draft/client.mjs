@@ -86,9 +86,15 @@ export class MinimaxDraftClient {
 export function invoiceIdFromLocation(location) {
   demand(typeof location === 'string' && location.length > 0, 'CREATE_LOCATION_MISSING');
   const url = new URL(location, API);
-  demand(url.origin === 'https://moj.minimax.rs' && !url.username && !url.password && !url.search && !url.hash, 'UNEXPECTED_CREATE_LOCATION');
+  demand(url.origin === 'https://moj.minimax.rs' && !url.username && !url.password && !url.hash, 'UNEXPECTED_CREATE_LOCATION');
   const match = url.pathname.match(/^\/(?:RS\/API\/)?api\/orgs\/81179\/issuedinvoices\/([1-9]\d*)\/?$/i);
   const id = Number(match?.[1]);
   demand(Number.isSafeInteger(id) && id > 0, 'UNEXPECTED_CREATE_LOCATION');
+  // Minimax's official AddIssuedInvoice response example repeats the path ID
+  // as ?id=6776691. Accept that one matching parameter only; do not follow the
+  // Location URL or forward its query. Readback uses our fixed HTTPS API path.
+  const params = [...url.searchParams.entries()];
+  demand(params.length === 0 || (params.length === 1 && params[0][0] === 'id' &&
+    params[0][1] === String(id)), 'UNEXPECTED_CREATE_LOCATION');
   return id;
 }
