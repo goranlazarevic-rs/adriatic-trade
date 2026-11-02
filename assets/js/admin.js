@@ -369,6 +369,7 @@
     try{
       const data=await api(path);
       if(!panel.isConnected||selectedId!==o.id)return;
+      panel.classList.remove('admin-busy');
       const states={preview:'Spreman pregled',sending:'Ishod prenosa treba proveriti',attention:'Ishod prenosa treba proveriti',created:'Nacrt je sačuvan; čeka proveru',verified:'Nacrt je pročitan i proveren'};
       panel.innerHTML=`<h3>Minimax · probni nacrt</h3><p><strong>${esc(states[data.status]||'Potrebna provera')}</strong>. Račun se ne izdaje.</p>
         <div style="overflow-x:auto"><table><thead><tr><th>Artikal</th><th>Kol.</th><th>Cena sa PDV</th><th>Iznos</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td>${esc(r.name)}<br><small>${esc(r.sku)} ${esc(r.description)}</small></td><td>${esc(r.qty)}</td><td>${esc(amount(r.price))}</td><td>${esc(amount(r.value))}</td></tr>`).join('')}</tbody></table></div>
@@ -389,7 +390,7 @@
       };
       panel.querySelector('[data-mm-create]')?.addEventListener('click',()=>send('create'));
       panel.querySelector('[data-mm-verify]')?.addEventListener('click',()=>send('verify'));
-    }catch(error){if(panel.isConnected&&selectedId===o.id)panel.innerHTML='<h3>Minimax · probni nacrt</h3><p>'+esc(error.message)+'</p>';}
+    }catch(error){if(panel.isConnected&&selectedId===o.id){panel.classList.remove('admin-busy');panel.innerHTML='<h3>Minimax · probni nacrt</h3><p>'+esc(error.message)+'</p>';}}
   }
 
   function operationsForm(o){const v=o.operations||{};const local=(o.events||[]).some(e=>e.event_type==='local_delivery_approved')||o.courier==='Lična dostava';
