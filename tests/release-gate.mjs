@@ -13,8 +13,8 @@ const {validate, deploy} = workflow.jobs;
 for(const file of ['tests/minimax-integrated-runtime.mjs','tests/minimax-integrated-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
 assert.ok(workflow.on.pull_request.paths.includes('assets/js/admin-probe.js'));
 assert.ok(workflow.on.pull_request.paths.includes('docs/MINIMAX-INTEGRATED-PROBA.md'));
-for(const file of ['tests/minimax-stock.mjs','tests/minimax-stock-browser.mjs','tests/minimax-reservations.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
-for(const file of ['assets/js/admin-stock.js','docs/MINIMAX-STOCK-PREVIEW.md'])assert.ok(workflow.on.pull_request.paths.includes(file),file);
+for(const file of ['tests/minimax-stock.mjs','tests/minimax-stock-browser.mjs','tests/minimax-reservations.mjs','tests/minimax-handoff.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
+for(const file of ['assets/js/admin-stock.js','docs/MINIMAX-STOCK-PREVIEW.md','docs/MINIMAX-RESERVATION-HANDOFF.md','tools/minimax-reconciliation/**'])assert.ok(workflow.on.pull_request.paths.includes(file),file);
 const inputs = workflow.on.workflow_dispatch.inputs;
 
 assert.deepEqual(workflow.on.pull_request.paths, workflow.on.push.paths);

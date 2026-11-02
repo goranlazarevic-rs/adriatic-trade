@@ -56,3 +56,7 @@ Pravi workerd/D1 proverava kombinovani tok, zatim obračun četiri rezervacije i
 ## Tabelarni prikaz
 
 Na zahtev vlasnika, posle uspešne žive probe 4.11.0, kartice su zamenjene tabelama. Artikli prikazuju šifru, naziv, Minimax stanje, rezervisano i probni ostatak u istom redu; osnovno očitavanje prikazuje prve tri kolone. Paketi su u zasebnoj tabeli naziv/kapacitet. Količine su desno poravnate, sa tabularnim ciframa. Na telefonu se šira tabela pomera horizontalno u svom okviru, uz stalno vidljivu šifru; nema vertikalnog skrola unutar tabele. Nepoznato, negativno stanje i manjak ostaju vidljivi. Menjaju se samo prikaz, CSS i verzije asset-a; Worker/API, formula i kvote ostaju isti.
+
+## Nastavak: prelaz na robno razduženje
+
+Vlasnik je potvrdio uključeno automatsko razduženje po izdatom računu. Razvojni model prelaza i granice povezivanja opisani su u `docs/MINIMAX-RESERVATION-HANDOFF.md`. Model je odvojen, offline i nije pozvan iz Workera. Aktivni probni obračun i dalje blokira izdat dokument; nema automatskog oslobađanja rezervacija.

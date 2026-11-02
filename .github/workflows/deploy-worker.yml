@@ -18,6 +18,7 @@ on:
       - "assets/js/admin-stock.js"
       - "docs/MINIMAX-STOCK-PREVIEW.md"
       - "docs/MINIMAX-RESERVATIONS-PREVIEW.md"
+      - "docs/MINIMAX-RESERVATION-HANDOFF.md"
       - "docs/MINIMAX-INTEGRATED-PROBA.md"
       - "assets/js/admin-availability.js"
       - "assets/css/admin.css"
@@ -25,6 +26,7 @@ on:
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
       - "tools/minimax-draft/**"
+      - "tools/minimax-reconciliation/**"
       - "tools/minimax-staging/**"
       - "worker/minimax-staging.js"
       - "scripts/check-minimax-staging.sh"
@@ -55,6 +57,7 @@ on:
       - "assets/js/admin-stock.js"
       - "docs/MINIMAX-STOCK-PREVIEW.md"
       - "docs/MINIMAX-RESERVATIONS-PREVIEW.md"
+      - "docs/MINIMAX-RESERVATION-HANDOFF.md"
       - "docs/MINIMAX-INTEGRATED-PROBA.md"
       - "assets/js/admin-availability.js"
       - "assets/css/admin.css"
@@ -62,6 +65,7 @@ on:
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
       - "tools/minimax-draft/**"
+      - "tools/minimax-reconciliation/**"
       - "tools/minimax-staging/**"
       - "worker/minimax-staging.js"
       - "scripts/check-minimax-staging.sh"
@@ -135,7 +139,7 @@ jobs:
           node tests/notification-outbox.mjs
           node tests/checkout-security.mjs
           node tests/checkout-availability.mjs
-          node --test tests/minimax-draft.mjs tests/minimax-admin.mjs tests/minimax-stock.mjs tests/minimax-reservations.mjs
+          node --test tests/minimax-draft.mjs tests/minimax-admin.mjs tests/minimax-stock.mjs tests/minimax-reservations.mjs tests/minimax-handoff.mjs
           node tests/minimax-staging-policy.mjs
           node tests/inquiry-security.mjs
 
