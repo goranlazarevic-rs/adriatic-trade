@@ -35,7 +35,7 @@ try{
     VALUES(?,?,?,?,'confirmed','API','Proba','minimax-test@example.invalid','0600000000','Dostava na adresu','21208','Sremska Kamenica','TEST_BANK_TRANSFER',?,?,?,?)`).bind(f.id,f.id,f.createdAt,f.createdAt,JSON.stringify(f.items),f.goodsTotal,f.shipping,f.total).run();
   const preview=await (await call()).json();assert.equal(preview.status,'preview');assert.equal(posts,0);
   const results=await Promise.all(Array.from({length:8},()=>call(path,{action:'create',confirm:true,previewHash:preview.previewHash})));
-  assert.ok(results.every(r=>r.status===200),JSON.stringify(await Promise.all(results.map(async r=>({status:r.status,body:await r.text()})))));assert.equal(posts,1,'8 concurrent clicks must create exactly one draft');
+  assert.ok(results.every(r=>r.status===200),JSON.stringify(results.map(r=>r.status)));assert.equal(posts,1,'8 concurrent clicks must create exactly one draft');
   assert.equal((await (await call()).json()).status,'verified');
   assert.equal((await db.prepare('SELECT count(*) n FROM minimax_drafts').first()).n,1);
   assert.equal((await db.prepare("SELECT count(*) n FROM order_events WHERE event_type='minimax_draft_attempt'").first()).n,1);
