@@ -1,0 +1,26 @@
+name: Minimax draft Windows probe
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/minimax-draft/**"
+      - "tests/minimax-draft.mjs"
+      - "tests/minimax-windows.ps1"
+      - "tests/helpers/minimax-http-fixture.mjs"
+      - ".github/workflows/minimax-draft-windows.yml"
+permissions:
+  contents: read
+jobs:
+  windows-probe:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Adapter regressions on Windows
+        run: node --test tests/minimax-draft.mjs
+      - name: Windows PowerShell secure prompt and round trip with synthetic transport
+        shell: powershell
+        run: ./tests/minimax-windows.ps1
