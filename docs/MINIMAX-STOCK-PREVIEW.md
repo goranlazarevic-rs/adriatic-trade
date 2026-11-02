@@ -1,8 +1,14 @@
 # Pregled zaliha iz Minimax-a
 
-Razvojni dodatak 2.11.2026, Worker 4.10.2, u objedinjenu probnu granu #19. Nije objavljen u produkciji. Staging mora zasebno da se ažurira posle uspešne validacije punog SHA.
+Razvojni dodatak 2.11.2026, Worker 4.10.3, u objedinjenu probnu granu #19. Nije objavljen u produkciji. Staging mora zasebno da se ažurira posle uspešne validacije punog SHA.
 
-Verzija 4.10.1 objavljena je na staging-u kroz Release Gate #51. Stvarno čitanje nije uspelo: vlasnik je dostavio 502 odgovor sa `MINIMAX_HTTP_ERROR`. To potvrđuje neuspešan uzvodni HTTP odgovor, ali ne identifikuje njegov status niti korak; uzrok još nije potvrđen. Verzija 4.10.2 dodaje samo dijagnostiku: fiksan naziv koraka (prijava, organizacija ili zalihe), poznati SKU ako je primenljiv i broj uzvodnog HTTP statusa. Telo, zaglavlja i tajne iz Minimax greške ne prenose se. Način i broj poziva ostaju isti. Sledeća proba čeka ovu staging objavu; ne menjati pristupne podatke na osnovu same generičke greške.
+Verzija 4.10.1 objavljena je na staging-u kroz Release Gate #51. Stvarno čitanje nije uspelo: vlasnik je dostavio 502 odgovor sa `MINIMAX_HTTP_ERROR`. To potvrđuje neuspešan uzvodni HTTP odgovor, ali ne identifikuje njegov status niti korak; uzrok još nije potvrđen. Verzija 4.10.2 dodaje samo dijagnostiku: fiksan naziv koraka (prijava, organizacija ili zalihe), poznati SKU ako je primenljiv i broj uzvodnog HTTP statusa. Telo, zaglavlja i tajne iz Minimax greške ne prenose se. Način i broj poziva ostaju isti. Verzija je objavljena samo na staging kroz uspešan Release Gate #53. Vlasnik je dostavio poruku `stock / 10307 / HTTP 503`, a posle pauze ponovo neuspešno čitanje za 10086. Prijava i provera organizacije su prošle; uzrok u samom stock servisu još nije potvrđen.
+
+## Promena 4.10.3 nakon ponovljene greške
+
+Pet stock GET poziva sada se izvršava redom, uz pauzu 500 ms pre svakog artikla, posle prethodne provere organizacije/odgovora artikla. Čeka se celo telo prethodnog odgovora i njegova validacija. Prva HTTP, mrežna ili validaciona greška prekida preostale pozive i vraća bezbednu dijagnostiku bez delimičnih količina. Nema automatskih ponavljanja, dodatne OAuth prijave, druge API putanje ili promene tajni. Uspešno čitanje dodaje oko 2,5 sekunde pauza. To smanjuje istovremeno opterećenje u okviru jednog čitanja; nije globalni limiter između više sesija/Worker instanci.
+
+Ovo je ograničena promena radi pouzdanijeg pozivanja i dijagnostike, ne dokaz da je paralelizam izazvao 503. Objavljena ograničenja Minimax API-ja ne potvrđuju da se SEF ograničenje tri poziva u sekundi odnosi na ovaj stock API. Uslovi korišćenja traže pozivanje bez preopterećenja: https://moj.minimax.rs/RS/API/Home/TermsOfUse . Uspeh se potvrđuje tek novim živim čitanjem posle staging objave.
 
 ## Ponašanje panela
 
@@ -35,10 +41,10 @@ Kasnije automatsko računanje raspoloživosti zahteva odvojeno trajno usaglašav
 
 ## Automatizovane provere
 
-`tests/minimax-stock.mjs`: 22 testa uz SQLite koji izričito odbija svaki upis na stock ruti; postojeće kvote/revizija/pauza/porudžbine/journals ostaju netaknuti; 0/negativno/null/odsustvo, auth, origin, metoda, fiksni filteri, pogrešna organizacija, šifra/ID/jedinica/serija, duplikat/truncation/page, mreža/redirect/JSON i uklanjanje osetljivih polja.
+`tests/minimax-stock.mjs`: 25 testova uz SQLite koji izričito odbija svaki upis na stock ruti; postojeće kvote/revizija/pauza/porudžbine/journals ostaju netaknuti; 0/negativno/null/odsustvo, auth, origin, metoda, fiksni filteri, pogrešna organizacija, šifra/ID/jedinica/serija, duplikat/truncation/page, mreža/redirect/JSON, bezbedni HTTP statusi, samo jedan aktivan poziv do čitanja tela, pet pauza i prekid na trećem SKU sa 503 bez ponavljanja ili delimičnog rezultata.
 
 `tests/minimax-integrated-runtime.mjs`: pravi workerd/D1 i staging wrapper čitaju simulirano stock stanje, odbijaju neispravan odgovor/metodu/pristup, čuvaju kvote/reviziju/pauzu i ne kreiraju račun. Zadržane su sve postojeće zajedničke probe i oporavak neizvesnog nacrta.
 
 `tests/minimax-stock-browser.mjs`: pravi frontend, wrapper i Worker uz izolovani SQLite i simuliran Minimax na 1440/390/320 px: nema API poziva pri prijavi, ručno čitanje, nula/nepoznato/negativno, brisanje zastarelog prikaza nakon greške, nepromenjene kvote/pauza, kasni odgovor posle odjave i prelamanje prikaza.
 
-Automatizovane provere ne koriste stvarne Minimax podatke. Živo čitanje stanja u 4.10.1 nije uspelo; uzrok čeka dijagnostiku u 4.10.2 i poređenje vlasnika.
+Automatizovane provere ne koriste stvarne Minimax podatke. Živo čitanje stanja u 4.10.1 nije uspelo; 4.10.2 je potvrdio 503 u stock koraku. Čitanje sa novim redosledom u 4.10.3 čeka staging objavu i poređenje vlasnika.

@@ -118,7 +118,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.10.2",
+        version: "4.10.3",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -2439,17 +2439,23 @@ async function mmHandleStock(request,env,url,origin) {
     const startedAt=new Date().toISOString();
     // Item filters keep the pilot bounded regardless of the size of the full catalogue.
     // Mode=1 also requests items with historical stock. Missing rows are NOT zero.
-    const rows=await Promise.all(Object.entries(MM_ITEMS).filter(([sku])=>sku!=='DOSTAVA').map(([sku,[id,,name]])=>observe('stock',async()=>{
-      const data=await mmGet(token,`orgs/81179/stocks?WarehouseId=40999&ItemID=${id}&Mode=1&CurrentPage=1&PageSize=100`);
-      mmDemand(Array.isArray(data.Rows) && data.CurrentPageNumber===1 && Number.isSafeInteger(data.PageSize) && data.PageSize>0 &&
-        data.PageSize<=100 && data.TotalRows===data.Rows.length && data.Rows.length<=1 &&
-        (data.ValidationMessages===undefined || (Array.isArray(data.ValidationMessages)&&data.ValidationMessages.length===0)),'MINIMAX_INVALID_STOCK');
-      const row=data.Rows[0];
-      if(!row)return {sku,itemId:id,name,quantity:null,state:'unreported'};
-      mmDemand(row.Item?.ID===id && row.ItemCode===sku && row.UnitOfMeasurement==='kom' && (row.BatchNumber==null||row.BatchNumber===''),'MINIMAX_INVALID_STOCK');
-      mmDemand(row.Quantity===null || (Number.isSafeInteger(row.Quantity)&&Math.abs(row.Quantity)<=1000000000),'MINIMAX_INVALID_STOCK');
-      return {sku,itemId:id,name,quantity:row.Quantity,state:row.Quantity===null?'unreported':'reported'};
-    },sku)));
+    const rows=[];
+    for(const [sku,[id,,name]] of Object.entries(MM_ITEMS).filter(([sku])=>sku!=='DOSTAVA')){
+      // One request at a time, with a gap after the preceding organisation/item read.
+      // Stop at the first failure; do not retry authentication or fan out more reads.
+      await new Promise(resolve=>setTimeout(resolve,500));
+      rows.push(await observe('stock',async()=>{
+        const data=await mmGet(token,`orgs/81179/stocks?WarehouseId=40999&ItemID=${id}&Mode=1&CurrentPage=1&PageSize=100`);
+        mmDemand(Array.isArray(data.Rows) && data.CurrentPageNumber===1 && Number.isSafeInteger(data.PageSize) && data.PageSize>0 &&
+          data.PageSize<=100 && data.TotalRows===data.Rows.length && data.Rows.length<=1 &&
+          (data.ValidationMessages===undefined || (Array.isArray(data.ValidationMessages)&&data.ValidationMessages.length===0)),'MINIMAX_INVALID_STOCK');
+        const row=data.Rows[0];
+        if(!row)return {sku,itemId:id,name,quantity:null,state:'unreported'};
+        mmDemand(row.Item?.ID===id && row.ItemCode===sku && row.UnitOfMeasurement==='kom' && (row.BatchNumber==null||row.BatchNumber===''),'MINIMAX_INVALID_STOCK');
+        mmDemand(row.Quantity===null || (Number.isSafeInteger(row.Quantity)&&Math.abs(row.Quantity)<=1000000000),'MINIMAX_INVALID_STOCK');
+        return {sku,itemId:id,name,quantity:row.Quantity,state:row.Quantity===null?'unreported':'reported'};
+      },sku));
+    }
     return json({ok:true,readOnly:true,organisationId:81179,warehouseId:40999,warehouseName:'VP skladište',startedAt,readAt:new Date().toISOString(),rows},200,origin);
   }catch(error){
     const codes=new Set(['MINIMAX_SECRETS_REQUIRED','MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE','MINIMAX_TIMEOUT','MINIMAX_NETWORK_ERROR','MINIMAX_INVALID_AUTH','MINIMAX_ORG_ACCESS_REQUIRED','MINIMAX_INVALID_STOCK']);

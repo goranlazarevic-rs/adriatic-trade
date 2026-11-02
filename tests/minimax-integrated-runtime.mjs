@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const {Miniflare,Response:MFResponse,convertV4MiniflareOptions}=require(process.env.MINIFLARE_MODULE_PATH||'miniflare');
 const host='https://adriatic-trade-minimax-staging.lakifinance.workers.dev';
 const headers={Origin:host,Authorization:'Bearer synthetic-admin-token-for-tests-only','Content-Type':'application/json'};
-const invoices=new Map(),posts=[];let loseCreate=false,failRead=false,invalidStock=false;
+const invoices=new Map(),posts=[];let loseCreate=false,failRead=false,invalidStock=false,stockFailure=false;const stockTimes=[];const stockIds=[];
 const mf=new Miniflare(convertV4MiniflareOptions({modules:[{type:'ESModule',path:'worker/minimax-staging.js'},{type:'ESModule',path:'worker/adriatic-trade-worker-v4.5.0.js'}],compatibilityDate:'2026-10-02',d1Databases:['DB'],
   serviceBindings:{ASSETS:async()=>new MFResponse('synthetic asset')},
   bindings:{ADMIN_TOKEN:'synthetic-admin-token-for-tests-only',MINIMAX_ENV:'staging',MINIMAX_MODE:'draft',MINIMAX_CLIENT_ID:'synthetic',MINIMAX_CLIENT_SECRET:'synthetic',MINIMAX_USERNAME:'adriatic-webshop',MINIMAX_PASSWORD:'synthetic'},
@@ -19,7 +19,9 @@ const mf=new Miniflare(convertV4MiniflareOptions({modules:[{type:'ESModule',path
     if(url.pathname.endsWith('/oauth20/token'))body={access_token:'synthetic',token_type:'bearer'};
     else if(url.pathname.endsWith('/currentuser/orgs'))body={Rows:[{Organisation:{ID:81179},APIAccess:'D'}]};
     else if(url.pathname.endsWith('/stocks')){
+      stockTimes.push(Date.now());stockIds.push(url.searchParams.get('ItemID'));
       assert.equal(request.method,'GET');assert.equal(url.searchParams.get('WarehouseId'),'40999');
+      if(stockFailure&&url.searchParams.get('ItemID')===String(ITEMS['10240'].id))return new MFResponse('private provider body',{status:503});
       const [sku,item]=Object.entries(ITEMS).find(([sku,v])=>sku!=='DOSTAVA'&&String(v.id)===url.searchParams.get('ItemID'))||[];assert.ok(sku);
       body={Rows:[{Item:{ID:item.id},ItemCode:sku,UnitOfMeasurement:'kom',Quantity:23,AveragePurchasePrice:987654321}],TotalRows:invalidStock?2:1,CurrentPageNumber:1,PageSize:100};
     }
@@ -54,9 +56,13 @@ try {
   assert.equal((await call('/admin/minimax-stock',undefined,{headers:{Origin:host}})).status,401);
   assert.equal((await call('/admin/minimax-stock',{})).status,403);
   const observed=await data('/admin/minimax-stock');assert.equal(observed.rows.length,5);assert.ok(observed.rows.every(r=>r.quantity===23));assert.ok(!JSON.stringify(observed).includes('987654321'));
+  assert.equal(stockTimes.length,5);for(let i=1;i<stockTimes.length;i++)assert.ok(stockTimes[i]-stockTimes[i-1]>=450,'Stock calls must be paced in real workerd');
+  const beforeFailure=stockTimes.length;stockFailure=true;
+  const failure=await call('/admin/minimax-stock'),failureData=await failure.json();assert.equal(failure.status,502);assert.equal(failureData.upstreamStatus,503);assert.equal(failureData.sku,'10240');assert.equal(failureData.rows,undefined);
+  assert.equal(stockTimes.length-beforeFailure,3,'Stops at failing third SKU, without retry');assert.deepEqual(stockIds.slice(beforeFailure),['10012','10086','10240'].map(sku=>String(ITEMS[sku].id)));stockFailure=false;
   invalidStock=true;assert.equal((await call('/admin/minimax-stock')).status,502);invalidStock=false;
   assert.deepEqual(await quota(),stockBefore);assert.equal(posts.length,0);
-  console.log('PASS stock GET in real workerd/D1: fixed warehouse/items, auth/method/invalid response, no invoice POST, quotas/revision/pause unchanged');
+  console.log('PASS stock GET in real workerd/D1: paced sequential reads, stop on 503, fixed warehouse/items, auth/method/invalid response, no invoice POST, quotas/revision/pause unchanged');
   const oldIds=['AT-MMTEST-STANDARD','AT-MMTEST-PAKET','AT-MMTEST-BESPLATNA'],oldInvoices=[];
   for(const id of oldIds){await data('/admin/orders/'+id);oldInvoices.push((await create(id)).invoiceId);}
   const preserved=await db.prepare('SELECT * FROM minimax_drafts ORDER BY order_id').all();

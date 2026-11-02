@@ -11,11 +11,14 @@ export function stockHarness(){
   Object.assign(h.ctx.env,{MINIMAX_ENV:'staging',MINIMAX_MODE:'draft',MINIMAX_CLIENT_ID:'synthetic-client',MINIMAX_CLIENT_SECRET:'synthetic-secret',MINIMAX_USERNAME:'adriatic-webshop',MINIMAX_PASSWORD:'synthetic-password'});
   vm.runInContext('globalThis.orders=worker;',h.ctx);
   vm.runInContext(fs.readFileSync('worker/minimax-staging.js','utf8').replace(/^import orders[^\n]+\n/,'').replace('export default','globalThis.stage ='),h.ctx);
-  const state={mode:'ok',requests:[],reads:0};
+  const state={mode:'ok',requests:[],reads:0,pauses:[]};
+  // Virtual pacing only in this harness; real workerd test checks wall-clock gaps.
+  h.ctx.setTimeout=(fn,ms)=>{if(ms===500){state.pauses.push(ms);return setTimeout(fn,0);}return setTimeout(fn,ms);};
   h.ctx.fetch=async(url,options)=>{
     state.requests.push({url,method:options.method});assert.equal(options.redirect,'manual');assert.equal(new URL(url).origin,'https://moj.minimax.rs');
     const step=url.endsWith('/oauth20/token')?'authentication':url.includes('/currentuser/orgs')?'organisation':'stock';
-    if(state.httpStep===step)return new Response('synthetic provider secret body',{status:state.httpStatus,headers:{'X-Private':'synthetic secret header'}});
+    const requestedSku=step==='stock'?Object.entries(ITEMS).find(([sku,item])=>sku!=='DOSTAVA'&&String(item.id)===new URL(url).searchParams.get('ItemID'))?.[0]:null;
+    if(state.httpStep===step&&(!state.httpSku||state.httpSku===requestedSku))return new Response('synthetic provider secret body',{status:state.httpStatus,headers:{'X-Private':'synthetic secret header'}});
     if(url.endsWith('/oauth20/token'))return Response.json({access_token:'synthetic-token',token_type:'bearer'});
     assert.equal(options.method,'GET','No external mutation after OAuth');
     if(url.includes('/currentuser/orgs'))return Response.json({Rows:[{Organisation:{ID:state.mode==='org'?42:81179},APIAccess:'D'}]});

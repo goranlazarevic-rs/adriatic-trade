@@ -7,7 +7,7 @@ function createMinimaxStockController({api,esc,dt}) {
   function show(){section.classList.remove('hidden');}
   async function read(){
     if(busy)return;
-    const current=++generation;busy=true;button.disabled=true;content.innerHTML='';content.setAttribute('aria-busy','true');message.textContent='Čitanje zaliha iz Minimax-a...';
+    const current=++generation;busy=true;button.disabled=true;content.innerHTML='';content.setAttribute('aria-busy','true');message.textContent='Čitanje zaliha iz Minimax-a, artikal po artikal...';
     try {
       const data=await api('/admin/minimax-stock',{cache:'no-store'});
       if(current!==generation)return;
