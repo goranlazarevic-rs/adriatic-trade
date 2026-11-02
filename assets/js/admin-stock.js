@@ -13,11 +13,15 @@ function createMinimaxStockController({api,esc,dt}) {
       if(current!==generation)return;
       if(data.readOnly!==true||data.organisationId!==81179||data.warehouseId!==40999||!Array.isArray(data.rows)||data.rows.length!==5||!Number.isFinite(Date.parse(data.readAt)))throw Error('Nepotpun pregled');
       if(calculate&&(data.scope!=='synthetic-reservation-preview'||data.salesReady!==false||data.quotaWrite!==false||!Array.isArray(data.bundles)||data.bundles.length!==3||!Number.isSafeInteger(data.reservationCount)))throw Error('Nepotpun obračun');
-      content.innerHTML=data.rows.map(r=>`<article><h3>${esc(r.name)}</h3><p>SKU <strong>${esc(r.sku)}</strong></p>
-        <p><strong>${r.state==='reported'&&Number.isSafeInteger(r.quantity)?esc(r.quantity)+' kom.':'Nije prijavljeno'}</strong></p>
-        ${calculate?`<p>Probno rezervisano: <strong>${esc(r.reserved)} kom.</strong></p><p>Probni ostatak: <strong>${r.simulationRemaining===null?'Nepoznato':esc(r.simulationRemaining)+' kom.'}</strong></p>${r.shortage>0?'<p>Manjak u probnom obračunu: '+esc(r.shortage)+' kom.</p>':''}`:''}
-        ${r.quantity<0?'<p>Negativno stanje — proverite u Minimax-u.</p>':''}</article>`).join('');
-      if(calculate)content.innerHTML+=data.bundles.map(b=>`<article><h3>${esc(b.name)}</h3><p>Probni kapacitet paketa: <strong>${b.simulationRemaining===null?'Nepoznato':esc(b.simulationRemaining)+' kom.'}</strong></p></article>`).join('');
+      const stockRows=data.rows.map(r=>`<tr><th scope="row">${esc(r.sku)}</th><td>${esc(r.name)}</td>
+        <td class="stock-number">${r.state==='reported'&&Number.isSafeInteger(r.quantity)?esc(r.quantity):'Nije prijavljeno'}${r.quantity<0?'<small class="stock-warning">Negativno stanje</small>':''}</td>
+        ${calculate?`<td class="stock-number">${esc(r.reserved)}</td><td class="stock-number"><strong>${r.simulationRemaining===null?'Nepoznato':esc(r.simulationRemaining)}</strong>${r.shortage>0?'<small class="stock-warning">Manjak: '+esc(r.shortage)+'</small>':''}</td>`:''}</tr>`).join('');
+      content.innerHTML=`<div class="admin-stock-table-wrap" role="region" aria-labelledby="minimax-items-caption" tabindex="0"><table class="admin-stock-table" data-minimax-items-table>
+        <caption id="minimax-items-caption">${calculate?'Probni obračun artikala':'Minimax zalihe'} · količine u komadima</caption>
+        <thead><tr><th scope="col">Šifra</th><th scope="col">Artikal</th><th scope="col" class="stock-number">Minimax</th>${calculate?'<th scope="col" class="stock-number">Rezervisano</th><th scope="col" class="stock-number">Probni ostatak</th>':''}</tr></thead><tbody>${stockRows}</tbody></table></div>`;
+      if(calculate)content.innerHTML+=`<div class="admin-stock-table-wrap admin-stock-bundles" role="region" aria-labelledby="minimax-bundles-caption" tabindex="0"><table class="admin-stock-table" data-minimax-bundles-table>
+        <caption id="minimax-bundles-caption">Probni kapacitet paketa · paketi dele iste komade</caption><thead><tr><th scope="col">Paket</th><th scope="col" class="stock-number">Kapacitet (kom.)</th></tr></thead>
+        <tbody>${data.bundles.map(b=>`<tr><th scope="row">${esc(b.name)}</th><td class="stock-number"><strong>${b.simulationRemaining===null?'Nepoznato':esc(b.simulationRemaining)}</strong></td></tr>`).join('')}</tbody></table></div>`;
       message.textContent=(calculate?'Probni obračun: '+data.reservationCount+' sintetičkih porudžbina. Paketi dele iste komade; kapaciteti se ne sabiraju. ':'')+'Očitano: '+dt(data.readAt)+'. Ovo je trenutni pregled; za novo stanje ponovo kliknite dugme. Izostanak podatka nije nulta zaliha.';
     }catch(error){if(current===generation){
       content.innerHTML='';

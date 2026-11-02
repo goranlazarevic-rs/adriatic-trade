@@ -30,21 +30,22 @@ try {
     await section.waitFor();assert.equal(h.mm.requests.length,0,'No automatic stock calls at login');
     const before=JSON.stringify(h.sql.prepare('SELECT * FROM checkout_stock').all());
     await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));
-    assert.equal(await section.locator('article').count(),5);assert.equal(h.mm.reads,5);assert.ok(!(await section.textContent()).includes('987654321'));
+    assert.equal(await section.locator('tbody tr').count(),5);assert.equal(await section.getByRole('table').count(),1);assert.deepEqual(await section.getByRole('columnheader').allTextContents(),['Šifra','Artikal','Minimax']);assert.equal(h.mm.reads,5);assert.ok(!(await section.textContent()).includes('987654321'));
     const calculation=section.locator('[data-minimax-reservations-read]');
     await calculation.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Probni obračun: 4'));
-    assert.equal(await section.locator('article').count(),8);assert.match(await section.textContent(),/Probno rezervisano: 7 kom/);assert.match(await section.textContent(),/Probni ostatak: 13 kom/);assert.match(await message.textContent(),/kapaciteti se ne sabiraju/);
+    assert.equal(await section.locator('tbody tr').count(),8);assert.equal(await section.getByRole('table').count(),2);const itemRow=section.getByRole('rowheader',{name:'10086',exact:true}).locator('..');assert.deepEqual((await itemRow.getByRole('cell').allTextContents()).slice(1),['20','7','13']);assert.deepEqual(await section.locator('[data-minimax-items-table]').getByRole('columnheader').allTextContents(),['Šifra','Artikal','Minimax','Rezervisano','Probni ostatak']);assert.match(await message.textContent(),/kapaciteti se ne sabiraju/);
     assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Reservation calculation fits narrow screens');
+    if(width<640){const wrap=section.locator('.admin-stock-table-wrap').first();const left=await itemRow.getByRole('rowheader').evaluate(el=>el.getBoundingClientRect().left);await wrap.evaluate(el=>el.scrollLeft=el.scrollWidth);const right=await wrap.evaluate(el=>el.getBoundingClientRect().right);assert.ok(Math.abs((await itemRow.getByRole('rowheader').evaluate(el=>el.getBoundingClientRect().left))-left)<2,'SKU stays visible while scrolling');assert.ok((await itemRow.getByRole('cell').last().evaluate(el=>el.getBoundingClientRect().right))<=right+1,'Last quantity column can be reached');}
     h.mm.invoices.get(entries[0].invoiceId).Status='I';await calculation.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Probni obračun nije potvrđen'));
-    assert.match(await message.textContent(),/usaglasiti rezervacije/);assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Long reconciliation code fits narrow screens');assert.equal(await section.locator('article').count(),0,'Issued draft clears the previous calculation');h.mm.invoices.get(entries[0].invoiceId).Status='O';
-    h.mm.mode='zero';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/0 kom\./);
+    assert.match(await message.textContent(),/usaglasiti rezervacije/);assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Long reconciliation code fits narrow screens');assert.equal(await section.locator('tbody tr').count(),0,'Issued draft clears the previous calculation');h.mm.invoices.get(entries[0].invoiceId).Status='O';
+    h.mm.mode='zero';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.equal(await section.getByRole('rowheader',{name:'10086',exact:true}).locator('..').getByRole('cell').nth(1).textContent(),'0');
     h.mm.mode='absent';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/Nije prijavljeno/);
-    h.mm.mode='network';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Zalihe nisu učitane'));assert.equal(await section.locator('article').count(),0,'Failed refresh clears old snapshot');
+    h.mm.mode='network';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Zalihe nisu učitane'));assert.equal(await section.locator('tbody tr').count(),0,'Failed refresh clears old snapshot');
     assert.match(await message.textContent(),/Korak: čitanje zaliha/);assert.ok(!(await message.textContent()).includes('Minimax HTTP'));
     h.mm.mode='ok';h.mm.httpStep='stock';h.mm.httpStatus=403;
     await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.includes('Minimax HTTP 403'));
     assert.match(await message.textContent(),/Korak: čitanje zaliha · SKU 10\d{3} · Minimax HTTP 403 · Kod: MINIMAX_HTTP_ERROR/);
-    assert.ok(!(await section.textContent()).includes('synthetic'));assert.ok(!(await section.textContent()).includes('secret'));assert.equal(await section.locator('article').count(),0);
+    assert.ok(!(await section.textContent()).includes('synthetic'));assert.ok(!(await section.textContent()).includes('secret'));assert.equal(await section.locator('tbody tr').count(),0);
     assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Diagnostic fits narrow screens');
     h.mm.httpStep=null;
     h.mm.mode='negative';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/Negativno stanje/);
@@ -54,6 +55,6 @@ try {
     hold=true;const waiting=new Promise(resolve=>entered=resolve);await calculation.click();await waiting;
     await page.locator('[data-admin-logout]').click();const lateResponse=page.waitForResponse(res=>res.url().endsWith('/admin/minimax-availability'));release();await lateResponse;
     assert.equal(await section.isVisible(),false);assert.equal(await section.locator('[data-minimax-stock-content]').textContent(),'','Late response must not reveal signed-out data');
-    assert.deepEqual(errors,[]);await page.close();console.log(`PASS stock browser ${width}px: explicit read, zero/unknown/negative, reservation calculation and issued-document block, safe HTTP diagnostics, failed refresh, unchanged quota/pause, late logout response and layout`);
+    assert.deepEqual(errors,[]);await page.close();console.log(`PASS stock browser ${width}px: explicit read, zero/unknown/negative, aligned stock/reservation tables, mobile scrolling with visible SKU, issued-document block, safe HTTP diagnostics, failed refresh, unchanged quota/pause, late logout response and layout`);
   }
 }finally{await browser.close();}

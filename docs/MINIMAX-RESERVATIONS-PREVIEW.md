@@ -52,3 +52,7 @@ To su očekivanja, ne novo živo očitavanje. Ako je neki nacrt izdat/izmenjen i
 `tests/minimax-reservations.mjs` proverava četiri prijema, stare seed porudžbine, ponavljanja, sačuvane sastave, unknown/0/negativno/manjak, neizvesne journals, izdat/izmenjen/nestao dokument, promene tokom čitanja i zaštite nove rute. Svi Minimax odgovori su simulirani; nema stvarnog izdavanja.
 
 Pravi workerd/D1 proverava kombinovani tok, zatim obračun četiri rezervacije i blokadu nakon promene statusa spoljnog nacrta, uz nepromenjene kvote, journals i broj invoice POST-ova. Browser 1440/390/320 px proverava prikaz formule i kapaciteta, brisanje prethodnog rezultata nakon blokade i kasni odgovor posle odjave.
+
+## Tabelarni prikaz
+
+Na zahtev vlasnika, posle uspešne žive probe 4.11.0, kartice su zamenjene tabelama. Artikli prikazuju šifru, naziv, Minimax stanje, rezervisano i probni ostatak u istom redu; osnovno očitavanje prikazuje prve tri kolone. Paketi su u zasebnoj tabeli naziv/kapacitet. Količine su desno poravnate, sa tabularnim ciframa. Na telefonu se šira tabela pomera horizontalno u svom okviru, uz stalno vidljivu šifru; nema vertikalnog skrola unutar tabele. Nepoznato, negativno stanje i manjak ostaju vidljivi. Menjaju se samo prikaz, CSS i verzije asset-a; Worker/API, formula i kvote ostaju isti.
