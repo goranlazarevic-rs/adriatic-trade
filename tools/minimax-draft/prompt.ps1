@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $VerbosePreference = 'SilentlyContinue'
 $DebugPreference = 'SilentlyContinue'
 $clientIdSecret = $clientPasswordSecret = $userPasswordSecret = $credentials = $null
+$json = $asciiJson = $null
 $savedOutputEncoding = $OutputEncoding
 function SecretText([Security.SecureString] $secret) {
     $ptr = [IntPtr]::Zero
@@ -53,8 +54,17 @@ try {
     $credentials = @{clientId=(SecretText $clientIdSecret); clientSecret=(SecretText $clientPasswordSecret);
         username=$userName; password=(SecretText $userPasswordSecret)}
     $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    # Windows PowerShell 5.1 native pipes can replace non-ASCII characters.
+    # Escape JSON UTF-16 units so every pipe byte is ASCII, preserving Unicode
+    # credentials independently of the console code page. Node JSON.parse
+    # reconstructs the original characters, including surrogate pairs.
+    $json = $credentials | ConvertTo-Json -Compress
+    $asciiJson = [regex]::Replace($json, '[^\u0000-\u007f]', {
+        param($match)
+        '\u{0:x4}' -f [int][char]$match.Value[0]
+    })
     # Only stdin, never arguments, environment, logs or files.
-    $credentials | ConvertTo-Json -Compress | & node $cli @nodeArgs
+    $asciiJson | & node $cli @nodeArgs
     $result = $LASTEXITCODE
 } catch {
     Write-Host 'REZULTAT: NEUSPEH; lokalno pokretanje nije uspelo. Ne ponavljajte naslepo.'
@@ -65,6 +75,7 @@ try {
         if ($null -ne $secret) { $secret.Dispose() }
     }
     $credentials = $null
+    $json = $asciiJson = $null
     $OutputEncoding = $savedOutputEncoding
 }
 exit $result
