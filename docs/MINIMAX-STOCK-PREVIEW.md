@@ -48,3 +48,7 @@ Kasnije automatsko računanje raspoloživosti zahteva odvojeno trajno usaglašav
 `tests/minimax-stock-browser.mjs`: pravi frontend, wrapper i Worker uz izolovani SQLite i simuliran Minimax na 1440/390/320 px: nema API poziva pri prijavi, ručno čitanje, nula/nepoznato/negativno, brisanje zastarelog prikaza nakon greške, nepromenjene kvote/pauza, kasni odgovor posle odjave i prelamanje prikaza.
 
 Automatizovane provere ne koriste stvarne Minimax podatke. Živo čitanje stanja u 4.10.1 nije uspelo; 4.10.2 je potvrdio 503 u stock koraku. Čitanje sa novim redosledom u 4.10.3 čeka staging objavu i poređenje vlasnika.
+
+## Nastavak 4.11.0
+
+Novo odvojeno dugme prikazuje samo probni obračun sintetičkih rezervacija. Osnovni stock GET ostaje samo pregled. Detalji, ograničenja i očekivana aritmetika su u `docs/MINIMAX-RESERVATIONS-PREVIEW.md`. Automatsko usaglašavanje i upis u prodajne kvote još nisu implementirani.

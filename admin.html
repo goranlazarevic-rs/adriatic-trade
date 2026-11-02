@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <link rel="icon" href="/assets/img/favicon.png">
   <link rel="stylesheet" href="/assets/css/style.css?v=3.8.2">
-  <link rel="stylesheet" href="/assets/css/admin.css?v=1.6.0">
+  <link rel="stylesheet" href="/assets/css/admin.css?v=1.6.1">
 </head>
 <body class="admin-body">
   <header class="admin-header">
@@ -51,8 +51,10 @@
       <section class="admin-box hidden" data-minimax-stock-section aria-labelledby="minimax-stock-heading">
         <h2 id="minimax-stock-heading">Zalihe iz Minimax-a · samo pregled</h2>
         <p>Organizacija 81179 · VP skladište 40999 · pet povezanih artikala. Očitavanje ne menja probne kvote i ne otvara prijem porudžbina.</p>
-        <p>Ovo je stanje koje vraća Minimax. Pregled još ne obračunava rezervacije webshopa niti potvrđuje da je roba slobodna za prodaju. Paketi koriste svoje sastavne proizvode.</p>
+        <p>Osnovni pregled prikazuje Minimax stanje bez oduzimanja rezervacija i ne potvrđuje da je roba slobodna za prodaju. Paketi koriste svoje sastavne proizvode.</p>
         <button class="btn btn-secondary" type="button" data-minimax-stock-read>Pročitaj zalihe iz Minimax-a</button>
+        <p>Probni obračun ispod oduzima samo rezervacije sintetičkih FLOW porudžbina od očitanog Minimax stanja. Rezultat služi proveri formule, ne potvrđuje slobodnu robu i ne prenosi se u prodajne kvote. Stari probni nalozi bez rezervacije nisu uključeni.</p>
+        <button class="btn btn-secondary" type="button" data-minimax-reservations-read>Proveri probni obračun rezervacija</button>
         <p data-minimax-stock-message role="status" aria-live="polite">Podaci još nisu očitani.</p>
         <div class="admin-stock-grid" data-minimax-stock-content></div>
       </section>
@@ -133,8 +135,8 @@
   </main>
 
   <script src="/assets/js/admin-availability.js?v=1.0.0"></script>
-  <script src="/assets/js/admin-stock.js?v=1.0.2"></script>
+  <script src="/assets/js/admin-stock.js?v=1.1.0"></script>
   <script src="/assets/js/admin-probe.js?v=1.0.0"></script>
-  <script src="/assets/js/admin.js?v=4.10.3"></script>
+  <script src="/assets/js/admin.js?v=4.11.0"></script>
 </body>
 </html>

@@ -129,6 +129,16 @@ try {
   assert.equal(posts.length,7,'Three existing fixtures + four new fixed-flow scenarios, no repeated creates');
   assert.equal((await db.prepare('SELECT count(*) n FROM notification_outbox').first()).n,0);
   for(const route of ['/order','/inquiry','/admin/courier-exports','/admin/orders/'+id+'/ship','/admin/orders/'+id+'/receipt'])assert.ok([403,404].includes((await call(route,{})).status));
+  await change({action:'pause'});
+  const beforeCalculation=await quota(),postsBefore=posts.length,journalsBefore=await db.prepare('SELECT * FROM minimax_drafts ORDER BY order_id').all();
+  const calculation=await data('/admin/minimax-availability');assert.equal(calculation.reservationCount,4);assert.equal(calculation.salesReady,false);assert.equal(calculation.quotaWrite,false);
+  for(const [sku,reserved] of Object.entries({'10012':3,'10086':7,'10240':6,'10306':5,'10307':5})){
+    const row=calculation.rows.find(r=>r.sku===sku);assert.equal(row.reserved,reserved);assert.equal(row.simulationRemaining,23-reserved);
+  }
+  const linkedId=verified.invoiceId;invoices.get(linkedId).Status='I';
+  const blocked=await call('/admin/minimax-availability');assert.equal(blocked.status,409);assert.equal((await blocked.json()).code,'MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');invoices.get(linkedId).Status='O';
+  assert.deepEqual(await quota(),beforeCalculation);assert.deepEqual((await db.prepare('SELECT * FROM minimax_drafts ORDER BY order_id').all()).results,journalsBefore.results);assert.equal(posts.length,postsBefore);
+  console.log('PASS reservation calculation in real workerd/D1: four admissions, saved package units, existing drafts checked twice, issued blocks, no quota/journal/invoice writes');
   await db.prepare("UPDATE minimax_environment SET name='production'").run();assert.equal((await admit('PAKET')).status,503);
   console.log('PASS all three package recipes, free shipping, uncertain remote create/readback recovery, no email/courier/public checkout; wrong DB marker blocks writes');
 }finally{await mf.dispose();fs.rmSync(temp,{recursive:true,force:true});}

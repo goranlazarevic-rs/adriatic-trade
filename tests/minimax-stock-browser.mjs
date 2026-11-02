@@ -2,12 +2,14 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {stockHarness} from './helpers/minimax-stock-harness.mjs';
+import {seedReservations} from './helpers/minimax-reservations-fixture.mjs';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'playwright');
 const host='https://adriatic-trade-minimax-staging.lakifinance.workers.dev';
 const browser=await chromium.launch(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']}:{headless:true});
 try {
   for(const width of [1440,390,320]){
     const h=stockHarness(),page=await browser.newPage({viewport:{width,height:1000}}),errors=[];
+    const entries=await seedReservations(h);
     let hold=false,release,entered;
     page.on('pageerror',e=>errors.push(e.message));
     await page.route('**/*',async route=>{
@@ -15,7 +17,7 @@ try {
       if(url.pathname.startsWith('/admin/')){
         const headers=new Headers(req.headers());headers.set('Origin',host);
         const res=await h.ctx.stage.fetch(new Request(req.url(),{method:req.method(),headers,...(req.postData()?{body:req.postData()}:{})}),h.ctx.env,{});
-        if(hold&&url.pathname==='/admin/minimax-stock'){entered();await new Promise(resolve=>release=resolve);}
+        if(hold&&['/admin/minimax-stock','/admin/minimax-availability'].includes(url.pathname)){entered();await new Promise(resolve=>release=resolve);}
         return route.fulfill({status:res.status,headers:Object.fromEntries(res.headers),body:Buffer.from(await res.arrayBuffer())});
       }
       const file=url.pathname.slice(1);
@@ -29,6 +31,12 @@ try {
     const before=JSON.stringify(h.sql.prepare('SELECT * FROM checkout_stock').all());
     await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));
     assert.equal(await section.locator('article').count(),5);assert.equal(h.mm.reads,5);assert.ok(!(await section.textContent()).includes('987654321'));
+    const calculation=section.locator('[data-minimax-reservations-read]');
+    await calculation.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Probni obračun: 4'));
+    assert.equal(await section.locator('article').count(),8);assert.match(await section.textContent(),/Probno rezervisano: 7 kom/);assert.match(await section.textContent(),/Probni ostatak: 13 kom/);assert.match(await message.textContent(),/kapaciteti se ne sabiraju/);
+    assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Reservation calculation fits narrow screens');
+    h.mm.invoices.get(entries[0].invoiceId).Status='I';await calculation.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Probni obračun nije potvrđen'));
+    assert.match(await message.textContent(),/usaglasiti rezervacije/);assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Long reconciliation code fits narrow screens');assert.equal(await section.locator('article').count(),0,'Issued draft clears the previous calculation');h.mm.invoices.get(entries[0].invoiceId).Status='O';
     h.mm.mode='zero';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/0 kom\./);
     h.mm.mode='absent';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/Nije prijavljeno/);
     h.mm.mode='network';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Zalihe nisu učitane'));assert.equal(await section.locator('article').count(),0,'Failed refresh clears old snapshot');
@@ -43,9 +51,9 @@ try {
     assert.equal(JSON.stringify(h.sql.prepare('SELECT * FROM checkout_stock').all()),before);assert.equal(h.sql.prepare('SELECT mode FROM checkout_intake').get().mode,'paused');
     assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'No stock panel overflow');
     if(process.env.QA_SCREENSHOT_DIR){fs.mkdirSync(process.env.QA_SCREENSHOT_DIR,{recursive:true});await section.screenshot({path:process.env.QA_SCREENSHOT_DIR+'/minimax-stock-'+width+'.png'});}
-    hold=true;const waiting=new Promise(resolve=>entered=resolve);await button.click();await waiting;
-    await page.locator('[data-admin-logout]').click();const lateResponse=page.waitForResponse(res=>res.url().endsWith('/admin/minimax-stock'));release();await lateResponse;
+    hold=true;const waiting=new Promise(resolve=>entered=resolve);await calculation.click();await waiting;
+    await page.locator('[data-admin-logout]').click();const lateResponse=page.waitForResponse(res=>res.url().endsWith('/admin/minimax-availability'));release();await lateResponse;
     assert.equal(await section.isVisible(),false);assert.equal(await section.locator('[data-minimax-stock-content]').textContent(),'','Late response must not reveal signed-out data');
-    assert.deepEqual(errors,[]);await page.close();console.log(`PASS stock browser ${width}px: explicit read, zero/unknown/negative, safe HTTP diagnostics, failed refresh, unchanged quota/pause, late logout response and layout`);
+    assert.deepEqual(errors,[]);await page.close();console.log(`PASS stock browser ${width}px: explicit read, zero/unknown/negative, reservation calculation and issued-document block, safe HTTP diagnostics, failed refresh, unchanged quota/pause, late logout response and layout`);
   }
 }finally{await browser.close();}

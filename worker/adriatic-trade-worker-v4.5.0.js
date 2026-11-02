@@ -118,7 +118,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.10.3",
+        version: "4.11.0",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -163,7 +163,7 @@ export default {
       }
       try {
         if (url.pathname === "/admin/availability") return await handleAvailability(request, env, origin);
-        if (url.pathname === "/admin/minimax-stock") return await mmHandleStock(request, env, url, origin);
+        if (["/admin/minimax-stock","/admin/minimax-availability"].includes(url.pathname)) return await mmHandleStock(request, env, url, origin);
         if (url.pathname === "/admin/inquiries" && request.method === "GET") {
           await ensureInquirySchema(env.DB);
           await pruneInquiries(env.DB);
@@ -2420,7 +2420,80 @@ async function mmPreflight(token,payload) {
       typeof rows[0].PriceWithoutVAT==='number' && Math.abs(rows[0].PriceWithoutVAT-gross/1.2)<=0.000001,'MINIMAX_CUSTOMER_PRICE_CHANGED');
   }
 }
-// Observation only: no quota, reservation, invoice or schema writes on this route.
+// Synthetic reservation calculation only. No quota writes or release by invoice status.
+function mmReservationUnits(items) {
+  mmDemand(Array.isArray(items)&&items.length>0&&items.length<=20,'MINIMAX_INVALID_RESERVATIONS');
+  const totals=new Map(),seen=new Set();
+  const add=(sku,qty)=>{mmDemand(PHYSICAL_SKUS.includes(sku)&&Number.isSafeInteger(qty)&&qty>0&&qty<=10000,'MINIMAX_INVALID_RESERVATIONS');totals.set(sku,(totals.get(sku)||0)+qty);};
+  for(const item of items){
+    mmDemand(item&&typeof item.sku==='string'&&!seen.has(item.sku)&&Number.isSafeInteger(item.qty)&&item.qty>0&&item.qty<=20,'MINIMAX_INVALID_RESERVATIONS');seen.add(item.sku);
+    if(Object.hasOwn(BUNDLE_COMPONENTS,item.sku)){
+      mmDemand(typeof item.packageVersion==='string'&&/^v[1-9]\d{0,3}$/.test(item.packageVersion)&&Array.isArray(item.bundleComponents)&&item.bundleComponents.length>0&&item.bundleComponents.length<=5,'MINIMAX_INVALID_RESERVATIONS');
+      const parts=new Set();
+      for(const c of item.bundleComponents){mmDemand(c&&!parts.has(c.sku)&&Number.isSafeInteger(c.units)&&c.units>0&&c.units<=20,'MINIMAX_INVALID_RESERVATIONS');parts.add(c.sku);add(c.sku,item.qty*c.units);}
+    }else{mmDemand(item.bundleComponents===undefined,'MINIMAX_INVALID_RESERVATIONS');add(item.sku,item.qty);}
+  }
+  return [...totals].sort(([a],[b])=>a.localeCompare(b)).map(([sku,qty])=>({sku,qty}));
+}
+async function mmReservationSnapshot(db) {
+  const hasJournal=Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='minimax_drafts'").first());
+  // One SELECT captures all local inputs; LIMIT 5 detects overflow of the four fixed probes.
+  const fields=hasJournal?"j.status draftStatus,j.external_id invoiceId,j.payload_json planJson,j.preview_hash planHash":"NULL draftStatus,NULL invoiceId,NULL planJson,NULL planHash";
+  const row=await db.prepare(`SELECT (SELECT revision FROM checkout_control WHERE id=1) revision,
+    (SELECT mode FROM checkout_intake WHERE id=1) mode,
+    (SELECT json_group_array(json_object('submissionId',submission_id,'requirementsJson',requirements_json,'orderId',order_id,'status',order_status,'itemsJson',items_json,'payment',payment,'email',email,'draftStatus',draftStatus,'invoiceId',invoiceId,'planJson',planJson,'planHash',planHash))
+    FROM (SELECT a.submission_id,a.requirements_json,o.id order_id,o.status order_status,o.items_json,o.payment,o.customer_email email,${fields}
+      FROM checkout_admissions a LEFT JOIN orders o ON o.submission_id=a.submission_id ${hasJournal?'LEFT JOIN minimax_drafts j ON j.order_id=o.id':''}
+      ORDER BY a.submission_id LIMIT 5)) reservations`).first();
+  mmDemand(row&&Number.isSafeInteger(row.revision)&&row.revision>=0&&['paused','open'].includes(row.mode),'MINIMAX_INVALID_RESERVATIONS');
+  let entries;try{entries=JSON.parse(row.reservations);}catch{throw Error('MINIMAX_INVALID_RESERVATIONS');}
+  mmDemand(Array.isArray(entries)&&entries.length<=4,'MINIMAX_INVALID_RESERVATIONS');
+  const reserved=Object.fromEntries(PHYSICAL_SKUS.map(sku=>[sku,0])),ids=new Set();
+  for(const e of entries){
+    mmDemand(/^AT-MMTEST-FLOW-(STANDARD|PAKET|BESPLATNA|GURMAN)$/.test(e.submissionId)&&e.orderId===e.submissionId&&e.email==='minimax-test@example.invalid'&&e.payment==='TEST_BANK_TRANSFER'&&['new','confirmed'].includes(e.status),'MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');
+    let required,items;try{required=JSON.parse(e.requirementsJson);items=JSON.parse(e.itemsJson);}catch{throw Error('MINIMAX_INVALID_RESERVATIONS');}
+    const units=mmReservationUnits(items);
+    mmDemand(Array.isArray(required)&&required.length===units.length&&required.every((r,i)=>r?.sku===units[i].sku&&r.qty===units[i].qty),'MINIMAX_INVALID_RESERVATIONS');
+    for(const r of units)reserved[r.sku]+=r.qty;
+    if(e.draftStatus!==null){
+      mmDemand(['created','verified'].includes(e.draftStatus)&&Number.isSafeInteger(e.invoiceId)&&e.invoiceId>0&&!ids.has(e.invoiceId),'MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');ids.add(e.invoiceId);
+      let plan;try{plan=JSON.parse(e.planJson);}catch{throw Error('MINIMAX_INVALID_RESERVATIONS');}
+      mmDemand(await mmHash(e.planJson)===e.planHash&&plan.payload?.DocumentReference==='WEBSHOP:'+e.orderId&&Array.isArray(plan.payload.IssuedInvoiceRows),'MINIMAX_INVALID_RESERVATIONS');
+      const fromDraft=new Map();
+      for(const r of plan.payload.IssuedInvoiceRows){
+        if(r.ItemCode==='DOSTAVA')continue;
+        mmDemand(PHYSICAL_SKUS.includes(r.ItemCode)&&r.Item?.ID===MM_ITEMS[r.ItemCode][0]&&r.Warehouse?.ID===40999&&r.UnitOfMeasurement==='kom'&&Number.isSafeInteger(r.Quantity)&&r.Quantity>0&&r.Quantity<=200,'MINIMAX_INVALID_RESERVATIONS');
+        fromDraft.set(r.ItemCode,(fromDraft.get(r.ItemCode)||0)+r.Quantity);
+      }
+      mmDemand(fromDraft.size===units.length&&units.every(r=>fromDraft.get(r.sku)===r.qty),'MINIMAX_INVALID_RESERVATIONS');e.expected=plan.payload;
+    }else mmDemand(e.invoiceId===null&&e.planJson===null,'MINIMAX_INVALID_RESERVATIONS');
+  }
+  return {signature:JSON.stringify({hasJournal,...row}),entries,reserved,revision:row.revision};
+}
+async function mmCheckReservationDrafts(token,snapshot,observe){
+  for(const e of snapshot.entries.filter(e=>e.invoiceId!==null)){
+    await new Promise(resolve=>setTimeout(resolve,500));
+    await observe('drafts',async()=>{
+      const actual=await mmGet(token,`orgs/81179/issuedinvoices/${e.invoiceId}`);
+      // Issued is not proof of stock posting. Block rather than re-add or subtract twice.
+      mmDemand(actual?.Status==='O','MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');
+      try{mmVerify(actual,e.expected,e.invoiceId);}catch{throw Error('MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');}
+    });
+  }
+}
+function mmReservationCalculation(rows,snapshot){
+  const products=rows.map(r=>{
+    const reserved=snapshot.reserved[r.sku],known=r.state==='reported'&&Number.isSafeInteger(r.quantity);
+    return {...r,reserved,simulationRemaining:known?Math.max(0,r.quantity-reserved):null,shortage:known?Math.max(0,reserved-r.quantity):null};
+  });
+  const bundles=Object.entries(BUNDLE_COMPONENTS).map(([sku,components])=>{
+    const parts=Object.entries(components).map(([part,units])=>({row:products.find(p=>p.sku===part),units}));
+    return {sku,name:PRODUCTS[sku].name,simulationRemaining:parts.every(({row})=>row.simulationRemaining!==null)?Math.min(...parts.map(({row,units})=>Math.floor(row.simulationRemaining/units))):null};
+  });
+  return {scope:'synthetic-reservation-preview',salesReady:false,quotaWrite:false,reservationCount:snapshot.entries.length,reservationRevision:snapshot.revision,rows:products,bundles};
+}
+
+// Observation only: no quota, reservation, invoice or schema writes on these routes.
 async function mmHandleStock(request,env,url,origin) {
   if(!await mmStagingEnabled(env))return json({ok:false,error:'Not found'},404,origin);
   if(request.method!=='GET')return json({ok:false,error:'Dozvoljeno je samo čitanje zaliha.'},405,origin,{Allow:'GET'});
@@ -2430,13 +2503,16 @@ async function mmHandleStock(request,env,url,origin) {
     try{return await operation();}
     catch(error){error.stockStep=step;error.stockSku=sku;throw error;}
   };
+  const calculate=url.pathname==='/admin/minimax-availability';
   try {
+    const snapshot=calculate?await observe('reservations',()=>mmReservationSnapshot(env.DB)):null;
     const token=await observe('authentication',()=>mmLogin(env));
     await observe('organisation',async()=>{
       const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
       mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
     });
     const startedAt=new Date().toISOString();
+    if(calculate)await mmCheckReservationDrafts(token,snapshot,observe);
     // Item filters keep the pilot bounded regardless of the size of the full catalogue.
     // Mode=1 also requests items with historical stock. Missing rows are NOT zero.
     const rows=[];
@@ -2456,14 +2532,19 @@ async function mmHandleStock(request,env,url,origin) {
         return {sku,itemId:id,name,quantity:row.Quantity,state:row.Quantity===null?'unreported':'reported'};
       },sku));
     }
-    return json({ok:true,readOnly:true,organisationId:81179,warehouseId:40999,warehouseName:'VP skladište',startedAt,readAt:new Date().toISOString(),rows},200,origin);
+    if(calculate){
+      await mmCheckReservationDrafts(token,snapshot,observe);
+      const after=await observe('reservations',()=>mmReservationSnapshot(env.DB));
+      await observe('reservations',async()=>mmDemand(snapshot.signature===after.signature,'MINIMAX_RESERVATIONS_CHANGED'));
+    }
+    return json({ok:true,readOnly:true,organisationId:81179,warehouseId:40999,warehouseName:'VP skladište',startedAt,readAt:new Date().toISOString(),rows,...(calculate?mmReservationCalculation(rows,snapshot):{})},200,origin);
   }catch(error){
-    const codes=new Set(['MINIMAX_SECRETS_REQUIRED','MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE','MINIMAX_TIMEOUT','MINIMAX_NETWORK_ERROR','MINIMAX_INVALID_AUTH','MINIMAX_ORG_ACCESS_REQUIRED','MINIMAX_INVALID_STOCK']);
+    const codes=new Set(['MINIMAX_SECRETS_REQUIRED','MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE','MINIMAX_TIMEOUT','MINIMAX_NETWORK_ERROR','MINIMAX_INVALID_AUTH','MINIMAX_ORG_ACCESS_REQUIRED','MINIMAX_INVALID_STOCK','MINIMAX_INVALID_RESERVATIONS','MINIMAX_RESERVATION_RECONCILIATION_REQUIRED','MINIMAX_RESERVATIONS_CHANGED']);
     const code=codes.has(error.message)?error.message:'MINIMAX_STOCK_UNAVAILABLE';
-    const step=['authentication','organisation','stock'].includes(error.stockStep)?error.stockStep:'unknown';
+    const step=['authentication','organisation','stock','reservations','drafts'].includes(error.stockStep)?error.stockStep:'unknown';
     const sku=Object.hasOwn(MM_ITEMS,error.stockSku||'')&&error.stockSku!=='DOSTAVA'?error.stockSku:null;
     const upstreamStatus=Number.isInteger(error.upstreamStatus)&&error.upstreamStatus>=300&&error.upstreamStatus<=599?error.upstreamStatus:null;
-    return json({ok:false,code,step,sku,upstreamStatus,error:'Stanje zaliha nije pouzdano učitano iz Minimax-a. Probne kvote nisu promenjene.'},502,origin);
+    return json({ok:false,code,step,sku,upstreamStatus,error:calculate?'Probni obračun rezervacija nije potvrđen. Probne kvote nisu promenjene.':'Stanje zaliha nije pouzdano učitano iz Minimax-a. Probne kvote nisu promenjene.'},code.startsWith('MINIMAX_RESERVATION')||code==='MINIMAX_INVALID_RESERVATIONS'?409:502,origin);
   }
 }
 function mmLocation(value) {
