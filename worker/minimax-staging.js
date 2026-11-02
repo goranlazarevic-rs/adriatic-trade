@@ -15,7 +15,7 @@ export default {
       if((request.method!=='GET'&&origin!==ORIGIN)||(origin&&origin!==ORIGIN))return new Response('Forbidden',{status:403});
       // The isolated pilot permits quota controls and fixed synthetic admissions.
       // Public checkout, customer emails, shipping and issuing stay blocked.
-      const read=request.method==='GET' && /^\/admin\/(?:availability|probe-orders|orders(?:\/[^/]+(?:\/minimax-draft)?)?|metrics|attention|courier-exports|inquiries)$/.test(url.pathname);
+      const read=request.method==='GET' && /^\/admin\/(?:availability|minimax-stock|probe-orders|orders(?:\/[^/]+(?:\/minimax-draft)?)?|metrics|attention|courier-exports|inquiries)$/.test(url.pathname);
       const write=request.method==='POST' && (/^\/admin\/orders\/AT-MMTEST-[A-Z0-9-]+\/minimax-draft$/.test(url.pathname) || url.pathname==='/admin/availability' || /^\/admin\/probe-orders(?:\/AT-MMTEST-FLOW-(?:STANDARD|PAKET|BESPLATNA|GURMAN)\/confirm)?$/.test(url.pathname));
       if(!read&&!write)return new Response(JSON.stringify({ok:false,error:'Probni panel dozvoljava kvote, sintetičke porudžbine i Minimax nacrte.'}),{status:403,headers:{'Content-Type':'application/json'}});
       const headers=new Headers(request.headers);headers.set('Origin','https://adriatictrade.rs');

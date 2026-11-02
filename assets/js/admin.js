@@ -51,14 +51,17 @@
 
   const probe=minimaxStage&&typeof createProbeController==='function'?createProbeController({api,esc,money,onAccepted:async id=>{await loadOrders();await openOrder(id);await availability?.load();}}):null;
 
+  const stock=minimaxStage&&typeof createMinimaxStockController==='function'?createMinimaxStockController({api,esc,dt}):null;
+
   function showLogin(message=''){
     availability?.reset();
     probe?.reset();
+    stock?.reset();
     resetInquiries();
     login.classList.remove('hidden');app.classList.add('hidden');logout.classList.add('hidden');
     loginError.textContent=message;loginError.classList.toggle('hidden',!message);
   }
-  function showApp(){login.classList.add('hidden');app.classList.remove('hidden');logout.classList.remove('hidden')}
+  function showApp(){stock?.show();login.classList.add('hidden');app.classList.remove('hidden');logout.classList.remove('hidden')}
   function notify(message,type=''){
     alertBox.textContent=message;alertBox.classList.remove('hidden','success');if(type==='success')alertBox.classList.add('success');
     setTimeout(()=>alertBox.classList.add('hidden'),4500);

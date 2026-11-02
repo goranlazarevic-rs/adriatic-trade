@@ -118,7 +118,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.10.0",
+        version: "4.10.1",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -163,6 +163,7 @@ export default {
       }
       try {
         if (url.pathname === "/admin/availability") return await handleAvailability(request, env, origin);
+        if (url.pathname === "/admin/minimax-stock") return await mmHandleStock(request, env, url, origin);
         if (url.pathname === "/admin/inquiries" && request.method === "GET") {
           await ensureInquirySchema(env.DB);
           await pruneInquiries(env.DB);
@@ -2413,6 +2414,36 @@ async function mmPreflight(token,payload) {
     const rows=data.Rows.filter(r=>r.Item?.ID===id && r.Customer?.ID===9775669 && r.Warehouse==null);
     mmDemand(rows.length===1 && rows[0].Code===sku && rows[0].UnitOfMeasurement==='kom' && mmCents(rows[0].PriceWithVAT)===gross*100 &&
       typeof rows[0].PriceWithoutVAT==='number' && Math.abs(rows[0].PriceWithoutVAT-gross/1.2)<=0.000001,'MINIMAX_CUSTOMER_PRICE_CHANGED');
+  }
+}
+// Observation only: no quota, reservation, invoice or schema writes on this route.
+async function mmHandleStock(request,env,url,origin) {
+  if(!await mmStagingEnabled(env))return json({ok:false,error:'Not found'},404,origin);
+  if(request.method!=='GET')return json({ok:false,error:'Dozvoljeno je samo čitanje zaliha.'},405,origin,{Allow:'GET'});
+  if(url.search)return json({ok:false,error:'Skladište i artikli su unapred određeni za ovu probu.'},400,origin);
+  try {
+    const token=await mmLogin(env);
+    const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
+    mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
+    const startedAt=new Date().toISOString();
+    // Item filters keep the pilot bounded regardless of the size of the full catalogue.
+    // Mode=1 also requests items with historical stock. Missing rows are NOT zero.
+    const rows=await Promise.all(Object.entries(MM_ITEMS).filter(([sku])=>sku!=='DOSTAVA').map(async([sku,[id,,name]])=>{
+      const data=await mmGet(token,`orgs/81179/stocks?WarehouseId=40999&ItemID=${id}&Mode=1&CurrentPage=1&PageSize=100`);
+      mmDemand(Array.isArray(data.Rows) && data.CurrentPageNumber===1 && Number.isSafeInteger(data.PageSize) && data.PageSize>0 &&
+        data.PageSize<=100 && data.TotalRows===data.Rows.length && data.Rows.length<=1 &&
+        (data.ValidationMessages===undefined || (Array.isArray(data.ValidationMessages)&&data.ValidationMessages.length===0)),'MINIMAX_INVALID_STOCK');
+      const row=data.Rows[0];
+      if(!row)return {sku,itemId:id,name,quantity:null,state:'unreported'};
+      mmDemand(row.Item?.ID===id && row.ItemCode===sku && row.UnitOfMeasurement==='kom' && (row.BatchNumber==null||row.BatchNumber===''),'MINIMAX_INVALID_STOCK');
+      mmDemand(row.Quantity===null || (Number.isSafeInteger(row.Quantity)&&Math.abs(row.Quantity)<=1000000000),'MINIMAX_INVALID_STOCK');
+      return {sku,itemId:id,name,quantity:row.Quantity,state:row.Quantity===null?'unreported':'reported'};
+    }));
+    return json({ok:true,readOnly:true,organisationId:81179,warehouseId:40999,warehouseName:'VP skladište',startedAt,readAt:new Date().toISOString(),rows},200,origin);
+  }catch(error){
+    const codes=new Set(['MINIMAX_SECRETS_REQUIRED','MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE','MINIMAX_TIMEOUT','MINIMAX_NETWORK_ERROR','MINIMAX_INVALID_AUTH','MINIMAX_ORG_ACCESS_REQUIRED','MINIMAX_INVALID_STOCK']);
+    const code=codes.has(error.message)?error.message:'MINIMAX_STOCK_UNAVAILABLE';
+    return json({ok:false,code,error:'Stanje zaliha nije pouzdano učitano iz Minimax-a. Probne kvote nisu promenjene.'},502,origin);
   }
 }
 function mmLocation(value) {

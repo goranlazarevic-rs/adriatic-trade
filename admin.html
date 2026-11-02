@@ -48,6 +48,14 @@
         <p data-availability-message role="status" aria-live="polite">Pregled još nije učitan.</p>
         <div data-availability-content></div>
       </section>
+      <section class="admin-box hidden" data-minimax-stock-section aria-labelledby="minimax-stock-heading">
+        <h2 id="minimax-stock-heading">Zalihe iz Minimax-a · samo pregled</h2>
+        <p>Organizacija 81179 · VP skladište 40999 · pet povezanih artikala. Očitavanje ne menja probne kvote i ne otvara prijem porudžbina.</p>
+        <p>Ovo je stanje koje vraća Minimax. Pregled još ne obračunava rezervacije webshopa niti potvrđuje da je roba slobodna za prodaju. Paketi koriste svoje sastavne proizvode.</p>
+        <button class="btn btn-secondary" type="button" data-minimax-stock-read>Pročitaj zalihe iz Minimax-a</button>
+        <p data-minimax-stock-message role="status" aria-live="polite">Podaci još nisu očitani.</p>
+        <div class="admin-stock-grid" data-minimax-stock-content></div>
+      </section>
       <section class="admin-box hidden" data-probe-section aria-labelledby="probe-heading">
         <h2 id="probe-heading">Zajednička proba: kvota → porudžbina → nacrt</h2>
         <p>Samo sintetički podaci. Svaki ponuđeni scenario ima stalni broj porudžbine. Ponovni prijem proverava istu porudžbinu; kvota se ne umanjuje ponovo. Ova proba ne proverava javni Turnstile niti šalje poruke.</p>
@@ -125,7 +133,8 @@
   </main>
 
   <script src="/assets/js/admin-availability.js?v=1.0.0"></script>
+  <script src="/assets/js/admin-stock.js?v=1.0.0"></script>
   <script src="/assets/js/admin-probe.js?v=1.0.0"></script>
-  <script src="/assets/js/admin.js?v=4.10.0"></script>
+  <script src="/assets/js/admin.js?v=4.10.1"></script>
 </body>
 </html>

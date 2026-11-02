@@ -4,7 +4,7 @@ import {fixtures} from './fixtures.mjs';
 const out=process.argv[2];
 if(!out)throw new Error('Output directory required');
 fs.mkdirSync(out,{recursive:true});
-for(const file of ['admin.html','assets/js/admin.js','assets/js/admin-availability.js','assets/js/admin-probe.js','assets/css/style.css','assets/css/admin.css','assets/img/favicon.png','assets/img/adriatic-trade-logo-header.png']){
+for(const file of ['admin.html','assets/js/admin.js','assets/js/admin-availability.js','assets/js/admin-probe.js','assets/js/admin-stock.js','assets/css/style.css','assets/css/admin.css','assets/img/favicon.png','assets/img/adriatic-trade-logo-header.png']){
   const target=path.join(out,'assets',file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(file,target);
 }
 const html=path.join(out,'assets/admin.html');

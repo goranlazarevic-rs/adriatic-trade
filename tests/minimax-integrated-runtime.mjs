@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const {Miniflare,Response:MFResponse,convertV4MiniflareOptions}=require(process.env.MINIFLARE_MODULE_PATH||'miniflare');
 const host='https://adriatic-trade-minimax-staging.lakifinance.workers.dev';
 const headers={Origin:host,Authorization:'Bearer synthetic-admin-token-for-tests-only','Content-Type':'application/json'};
-const invoices=new Map(),posts=[];let loseCreate=false,failRead=false;
+const invoices=new Map(),posts=[];let loseCreate=false,failRead=false,invalidStock=false;
 const mf=new Miniflare(convertV4MiniflareOptions({modules:[{type:'ESModule',path:'worker/minimax-staging.js'},{type:'ESModule',path:'worker/adriatic-trade-worker-v4.5.0.js'}],compatibilityDate:'2026-10-02',d1Databases:['DB'],
   serviceBindings:{ASSETS:async()=>new MFResponse('synthetic asset')},
   bindings:{ADMIN_TOKEN:'synthetic-admin-token-for-tests-only',MINIMAX_ENV:'staging',MINIMAX_MODE:'draft',MINIMAX_CLIENT_ID:'synthetic',MINIMAX_CLIENT_SECRET:'synthetic',MINIMAX_USERNAME:'adriatic-webshop',MINIMAX_PASSWORD:'synthetic'},
@@ -18,6 +18,11 @@ const mf=new Miniflare(convertV4MiniflareOptions({modules:[{type:'ESModule',path
     let body;
     if(url.pathname.endsWith('/oauth20/token'))body={access_token:'synthetic',token_type:'bearer'};
     else if(url.pathname.endsWith('/currentuser/orgs'))body={Rows:[{Organisation:{ID:81179},APIAccess:'D'}]};
+    else if(url.pathname.endsWith('/stocks')){
+      assert.equal(request.method,'GET');assert.equal(url.searchParams.get('WarehouseId'),'40999');
+      const [sku,item]=Object.entries(ITEMS).find(([sku,v])=>sku!=='DOSTAVA'&&String(v.id)===url.searchParams.get('ItemID'))||[];assert.ok(sku);
+      body={Rows:[{Item:{ID:item.id},ItemCode:sku,UnitOfMeasurement:'kom',Quantity:23,AveragePurchasePrice:987654321}],TotalRows:invalidStock?2:1,CurrentPageNumber:1,PageSize:100};
+    }
     else if(url.pathname.endsWith('/items/pricelists'))body={ValidationMessages:[],Rows:Object.entries(ITEMS).map(([Code,v])=>({Code,Item:{ID:v.id},Customer:{ID:9775669},Warehouse:null,UnitOfMeasurement:'kom',PriceWithVAT:v.gross,PriceWithoutVAT:v.gross/1.2}))};
     else if(request.method==='POST'&&url.pathname.endsWith('/issuedinvoices')){
       const payload=await request.json(),id=35000000+posts.length;posts.push(payload);invoices.set(id,{...payload,IssuedInvoiceId:id,InvoiceNumber:0});
@@ -45,6 +50,13 @@ try {
   const db=await mf.getD1Database('DB');
   const seed=async()=>{for(const sql of fs.readFileSync(path.join(temp,'seed.sql'),'utf8').split(/;[ \t]*(?:\n|$)/).filter(s=>s.trim()))await db.prepare(sql).run();};
   await seed();
+  const stockBefore=await quota();
+  assert.equal((await call('/admin/minimax-stock',undefined,{headers:{Origin:host}})).status,401);
+  assert.equal((await call('/admin/minimax-stock',{})).status,403);
+  const observed=await data('/admin/minimax-stock');assert.equal(observed.rows.length,5);assert.ok(observed.rows.every(r=>r.quantity===23));assert.ok(!JSON.stringify(observed).includes('987654321'));
+  invalidStock=true;assert.equal((await call('/admin/minimax-stock')).status,502);invalidStock=false;
+  assert.deepEqual(await quota(),stockBefore);assert.equal(posts.length,0);
+  console.log('PASS stock GET in real workerd/D1: fixed warehouse/items, auth/method/invalid response, no invoice POST, quotas/revision/pause unchanged');
   const oldIds=['AT-MMTEST-STANDARD','AT-MMTEST-PAKET','AT-MMTEST-BESPLATNA'],oldInvoices=[];
   for(const id of oldIds){await data('/admin/orders/'+id);oldInvoices.push((await create(id)).invoiceId);}
   const preserved=await db.prepare('SELECT * FROM minimax_drafts ORDER BY order_id').all();

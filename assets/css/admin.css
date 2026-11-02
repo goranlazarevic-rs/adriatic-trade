@@ -39,3 +39,8 @@
 /* Fixed synthetic pilot cards must wrap their identifiers on phones. */
 [data-probe-section] .admin-box { min-width:0; overflow-wrap:anywhere; }
 [data-probe-section] button { white-space:normal; min-height:44px; }
+
+.admin-stock-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;margin-top:16px}
+.admin-stock-grid article{min-width:0;overflow-wrap:anywhere;border:1px solid var(--line,#ddd);border-radius:12px;padding:16px}
+.admin-stock-grid h3{margin:0 0 12px;font-size:1rem}
+[data-minimax-stock-read]{white-space:normal;min-height:44px;max-width:100%}

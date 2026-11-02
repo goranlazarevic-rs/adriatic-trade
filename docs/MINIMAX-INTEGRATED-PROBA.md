@@ -40,7 +40,7 @@ Priprema staging-a koristi `CREATE IF NOT EXISTS` / `INSERT OR IGNORE`. Ne briš
 5. Kliknuti **Prihvati / proveri istu probnu porudžbinu** za jedan scenario. Prvi prijem umanjuje kvote i čuva novu porudžbinu. Ponoviti isto dugme: isti broj, isti prihvaćeni iznos, isto sačuvano telo i bez novog umanjenja. Pauziranje prijema ne blokira proveru već prihvaćenog zahteva.
 6. Kliknuti **Potvrdi probnu porudžbinu**. To ne šalje poruke i ne menja kvote. U njenim detaljima pregledati zasebni Minimax prikaz i, kada se odobri ta konkretna proba, kliknuti **Napravi probni nacrt** jednom. Nova FLOW porudžbina ima drugu referencu od ranijih nacrta. Izdavanje nije dostupno.
 7. Posle uspeha zabeležiti novi ID. Osvežiti panel i kliknuti **Proveri postojeći nacrt**: ID i iznos ostaju isti. Svaki novi create zahtev nakon prvog pokušaja samo vraća journal; posle neizvesnog ishoda dozvoljeno je jedino čitanje pronađenog ID-a. Ne ponavljati sa drugim ID-em porudžbine.
-8. Ponoviti sa ostalim scenarijima, zatim pauzirati probni prijem. Slike rezultata ne smeju sadržati tajne. Nove stvarne FLOW probe čekaju ovaj ručni postupak; automatizovani testovi koriste isključivo sintetičke Minimax odgovore.
+8. Ponoviti sa ostalim scenarijima, zatim pauzirati probni prijem. Slike rezultata ne smeju sadržati tajne. Žive FLOW probe su naknadno sprovedene uz korisnika, kako je zabeleženo u nastavku; automatizovani testovi koriste isključivo sintetičke Minimax odgovore.
 
 ## Automatizovane zajedničke provere
 
@@ -53,3 +53,20 @@ Priprema staging-a koristi `CREATE IF NOT EXISTS` / `INSERT OR IGNORE`. Ne briš
 Mapiranje pouzeća i IPS-a; izdavanje/fiskalizacija, PDF i dostava računa; vrednovanje i razduženje zaliha/VP-MP; potvrđena slobodna roba i poslovna dokumentacija; izbor/ugovor i integracija kurira. Nijedan od tih uslova se ne smatra rešenim ovim prenosom nacrta. Prikaz komponenti je zadržan; ne uvode se novi kombo artikli u Minimax.
 
 Produkcioni merge, migracija, objava sa početnom pauzom i kasnije otvaranje stvarne prodaje zahtevaju posebno odobrenje. Ova grana ne menja produkciju niti automatski pokreće deployment.
+
+## Korisnička zajednička proba 2.11.2026.
+
+Posle ručnog staging deploymenta [Release Gate #48](https://github.com/goranlazarevic-rs/adriatic-trade/actions/runs/41501603346) commita `72ee3efed87fd71fc0cf9c046490c82ee30f0d45` korisnik je slikama probnog panela pokazao četiri nova FLOW nacrta sa statusom „Nacrt je pročitan i proveren. Račun se ne izdaje.“:
+
+| FLOW scenario | Minimax ID | Ukupno |
+|---|---:|---:|
+| STANDARD | 25004946 | 2.968 RSD |
+| PAKET | 25005034 | 3.270 RSD |
+| BESPLATNA | 25005075 | 3.600 RSD |
+| GURMAN | 25005162 | 3.720 RSD |
+
+Korisnička slika potvrđuje blokadu prvog STANDARD prijema dok je pauziran. Uneto je po 10 sintetičkih komada za pet SKU. Slika nakon prijema STANDARD pokazuje svih pet kvota po 9, a ponovljen prijem poruku „Postojeća porudžbina; kvote nisu ponovo umanjene.“ Korisnik je zatim potvrdio „Isti broj, sve 9“ posle readback-a nacrta 25004946. Posle PAKET prijema potvrdio je očekivane kvote 10012=9,10086=7,10306=7,10307=7,10240=8; posle BESPLATNA potvrdio je 7,5,7,7,6 istim redosledom. Posle GURMAN očekivano završno stanje je 10012=7,10086=3,10240=4,10306=5,10307=5; završna slika kvota nije dostavljena, pa se to ne vodi kao nezavisno potvrđena količina. Na kraju je korisnik javio da je prijem pauziran.
+
+Ovo su korisnički dokazi iz panela; agent nema tajne i nije nezavisno čitao njihove stvarne Minimax journals. Ne ponavljati kreiranje sedam poznatih staging nacrta niti ih resetovati. Stari nacrti ostaju zasebni od četiri FLOW porudžbine. Stvarno izdavanje/fiskalizacija, knjigovodstveno razduženje i slanje kupcu/kuriru nisu deo ovog dokaza.
+
+Sledeći razvojni dodatak Worker 4.10.1: [pregled zaliha iz Minimax-a samo za čitanje](MINIMAX-STOCK-PREVIEW.md), bez prenošenja stvarnog stanja u sintetičke kvote. Ovaj dodatak zahteva novo staging ažuriranje; prethodni #48 ga ne sadrži.
