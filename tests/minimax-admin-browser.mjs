@@ -28,7 +28,8 @@ for(const width of [1440,390]){
     const req=route.request(),url=new URL(req.url());assert.equal(url.origin,host,'All browser traffic stays on isolated origin');
     if(url.pathname.startsWith('/admin/')){
       requests.push(url.pathname);
-      const response=await h.ctx.run(new Request(req.url(),{method:req.method(),headers:{...req.headers(),Origin:'https://adriatictrade.rs'},...(req.postData()?{body:req.postData()}:{})}));
+      const headers=new Headers(req.headers());headers.set('Origin','https://adriatictrade.rs');
+      const response=await h.ctx.run(new Request(req.url(),{method:req.method(),headers,...(req.postData()?{body:req.postData()}:{})}));
       return route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:Buffer.from(await response.arrayBuffer())});
     }
     const file=url.pathname==='/admin.html'?'admin.html':url.pathname.slice(1);
