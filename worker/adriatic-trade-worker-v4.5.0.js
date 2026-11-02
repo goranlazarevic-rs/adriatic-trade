@@ -2517,7 +2517,7 @@ async function mmHandleProbeOrder(request,env,url,origin) {
   let body;try{body=await mmReadBody(request);}catch{return fail('Neispravan probni zahtev.');}
   if(!body || body.confirm!==true)return fail('Potvrdite probnu radnju.');
   if(url.pathname===base) {
-    if(Object.keys(body).some(k=>!['scenario','confirm'].includes(k))||!Object.hasOwn(MM_PROBE_CARTS,body.scenario))return fail('Izaberite ponuđenu sintetičku probu.');
+    if(Object.keys(body).some(k=>!['scenario','confirm'].includes(k))||typeof body.scenario!=='string'||!Object.hasOwn(MM_PROBE_CARTS,body.scenario))return fail('Izaberite ponuđenu sintetičku probu.');
     try {
       const accepted=await acceptOrder(env.DB,mmProbeOrder(body.scenario));
       if(accepted.rejection)return json({ok:false,...accepted.rejection.body},accepted.rejection.status,origin);

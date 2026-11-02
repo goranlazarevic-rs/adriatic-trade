@@ -38,7 +38,8 @@ try {
     await page.route('**/*',async route=>{
       const req=route.request(),url=new URL(req.url());assert.equal(url.origin,host,'No production/browser third-party traffic');
       if(url.pathname.startsWith('/admin/')) {
-        const request=new Request(req.url(),{method:req.method(),headers:{...req.headers(),Origin:host},...(req.postData()?{body:req.postData()}:{})});
+        const headers=new Headers(req.headers());headers.set('Origin',host);
+        const request=new Request(req.url(),{method:req.method(),headers,...(req.postData()?{body:req.postData()}:{})});
         const response=await h.ctx.stage.fetch(request,h.ctx.env,{});
         if(url.pathname==='/admin/probe-orders'&&req.method()==='POST'&&response.ok&&loseAdmission){loseAdmission=false;return route.abort();}
         return route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:Buffer.from(await response.arrayBuffer())});

@@ -28,7 +28,7 @@ function createProbeController({api,esc,money,onAccepted}) {
       if(current!==generation)return;
       const order=result.order,node=content.querySelector(`[data-probe-result="${scenario}"]`);
       node.innerHTML=`<p>${esc(order.id)} · sačuvano ${esc(money(order.total))}. ${result.duplicate?'Postojeća porudžbina; kvote nisu ponovo umanjene.':'Prijem je sačuvan; kvote su jednom umanjene.'}</p>
-        ${order.status==='new'?'<button class="btn btn-primary" type="button" data-probe-confirm>Potvrdi probnu porudžbinu</button>':'<p>Porudžbina je potvrđena. Minimax pregled je u detaljima porudžbine.</p>'}`;
+        ${order.status==='new'?'<button class="btn btn-primary" type="button" data-probe-confirm disabled>Potvrdi probnu porudžbinu</button>':'<p>Porudžbina je potvrđena. Minimax pregled je u detaljima porudžbine.</p>'}`;
       node.querySelector('[data-probe-confirm]')?.addEventListener('click',()=>confirmOrder(order.id,node));
       message.textContent='Prijem je proveren. Za Minimax nacrt prvo potvrdite probnu porudžbinu.';
       await onAccepted(order.id);

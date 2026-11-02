@@ -56,7 +56,7 @@ try {
   assert.equal((await call('/admin/probe-orders',{scenario:'PAKET',confirm:true},{headers:{Origin:host}})).status,401);
   assert.equal((await call('/admin/probe-orders',{scenario:'PAKET',confirm:true},{headers:{...headers,Origin:'https://evil.example'}})).status,403);
   assert.equal((await call('/admin/probe-orders',{scenario:'PAKET',confirm:true},{headers:{Authorization:headers.Authorization,'Content-Type':'application/json'}})).status,403);
-  for(const body of [{scenario:'__proto__',confirm:true},{scenario:'PAKET',confirm:false},{scenario:'PAKET',confirm:true,items:[]},{scenario:'PAKET',confirm:true,price:1},{scenario:'PAKET',confirm:true,customer:{email:'real@example.com'}}])assert.equal((await call('/admin/probe-orders',body)).status,400);
+  for(const body of [{scenario:['PAKET'],confirm:true},{scenario:'__proto__',confirm:true},{scenario:'PAKET',confirm:false},{scenario:'PAKET',confirm:true,items:[]},{scenario:'PAKET',confirm:true,price:1},{scenario:'PAKET',confirm:true,customer:{email:'real@example.com'}}])assert.equal((await call('/admin/probe-orders',body)).status,400);
   assert.equal((await admit('PAKET')).status,503,'Paused intake');
   assert.equal((await db.prepare('SELECT count(*) n FROM checkout_admissions').first()).n,0);
   assert.equal((await quota()).mode,'paused');
@@ -89,6 +89,13 @@ try {
 
   for(const sku of ['10086','10012','10306','10307','10240'])await change({action:'quantity',sku,quantity:20,increaseConfirmed:true,confirmation:sku+' 20'});
   await change({action:'open',readinessConfirmed:true,confirmation:'OTVORI PRODAJU'});
+  const rollbackBefore=await quota(),admissionsBefore=(await db.prepare('SELECT count(*) n FROM checkout_admissions').first()).n;
+  await db.prepare("CREATE TRIGGER synthetic_order_failure BEFORE INSERT ON orders WHEN NEW.id='AT-MMTEST-FLOW-STANDARD' BEGIN SELECT RAISE(ABORT,'synthetic'); END").run();
+  assert.equal((await admit('STANDARD')).status,503);
+  assert.deepEqual(await quota(),rollbackBefore,'Failed order insert rolls back every debit and control revision');
+  assert.equal((await db.prepare('SELECT count(*) n FROM checkout_admissions').first()).n,admissionsBefore);
+  await db.prepare('DROP TRIGGER synthetic_order_failure').run();
+  console.log('PASS integrated admission failure rolls back order, component quotas, audit and revision');
   for(const [scenario,total] of [['STANDARD',2968],['BESPLATNA',3600],['GURMAN',3720]]) {
     const o=await data('/admin/probe-orders',{scenario,confirm:true});await confirm(o.order.id);
     const view=await preview(o.order.id);assert.equal(view.total,total);assert.equal(view.rows.some(r=>r.sku==='DOSTAVA'),scenario!=='BESPLATNA');
