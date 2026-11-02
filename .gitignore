@@ -6,3 +6,5 @@ node_modules/
 .minimax-local/
 *.p12
 *.pfx
+
+.minimax-stage/

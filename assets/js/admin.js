@@ -1,6 +1,7 @@
 (()=>{
-  const API='https://adriatic-trade-orders.lakifinance.workers.dev';
-  const KEY='at_admin_token';
+  const minimaxStage=location.hostname==='adriatic-trade-minimax-staging.lakifinance.workers.dev';
+  const API=minimaxStage?location.origin:'https://adriatic-trade-orders.lakifinance.workers.dev';
+  const KEY=minimaxStage?'at_minimax_stage_token':'at_admin_token';
   const login=document.querySelector('[data-admin-login]');
   const app=document.querySelector('[data-admin-app]');
   const loginForm=document.querySelector('[data-admin-login-form]');
@@ -187,11 +188,13 @@
       <div class="admin-box"><h3>Isporuka</h3><div class="admin-info">${row('Način',o.delivery.method)}${row('Adresa',address)}${row('Napomena',o.delivery.note||'—')}${row('Plaćanje',o.payment||'Pouzećem')}</div></div></div>
       <div class="admin-items"><div class="admin-item admin-item-head"><div>Proizvod</div><div>Kol.</div><div>Iznos</div></div>${items}</div>
       <div class="admin-totals"><div class="admin-total-row"><span>Vrednost robe</span><strong>${esc(money(o.goodsTotal))}</strong></div><div class="admin-total-row"><span>Dostava</span><strong>${o.shipping===0?'Besplatna':esc(money(o.shipping))}</strong></div><div class="admin-total-row final"><span>Ukupno</span><span>${esc(money(o.total))}</span></div></div>
-      ${actions}
-      ${operationsForm(o)}
+      ${o.minimax?.enabled?'<section class="admin-box" data-minimax-panel aria-live="polite"><h3>Minimax · probni nacrt</h3><p>Učitavanje pregleda…</p></section>':''}
+      ${o.minimax?.enabled?'':actions}
+      ${o.minimax?.enabled?'':operationsForm(o)}
       <div class="admin-events"><div class="admin-box"><h3>Istorija</h3>${events}</div></div>
     </div>`;
 
+    if(o.minimax?.enabled)loadMinimaxPreview(o);
     detail.querySelector('[data-operations]')?.addEventListener('submit',async e=>{
       e.preventDefault(); const body=Object.fromEntries(new FormData(e.currentTarget));body.revision=o.operationsRevision;
       setBusy(detail,true);
@@ -358,6 +361,37 @@
   function cashOnDeliveryAmount(o){return ['Lična dostava — IPS na račun','Lična dostava — uplata na račun'].includes(o.payment)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total}
   const opsLabels={pending:'Čeka pripremu',ready:'Spremna za slanje',shipped:'Poslata',delivered:'Isporučena',returned:'Vraćena',failed:'Neuspešna isporuka',unpaid:'Nenaplaćena',paid:'Naplaćena',refunded:'Refundirana',approved:'Proverena — prihvatljiva',rejected:'Proverena — odbijena'};
   function eventNote(e){if(e.event_type!=='operations')return e.note;try{const n=JSON.parse(e.note);return n.actor+' · '+n.reason+' · '+n.changes.map(c=>c.key+': '+(opsLabels[c.before]||c.before||'—')+' → '+(opsLabels[c.after]||c.after||'—')).join('; ')}catch{return e.note}}
+  async function loadMinimaxPreview(o){
+    const panel=detail.querySelector('[data-minimax-panel]');
+    if(!panel)return;
+    const path='/admin/orders/'+encodeURIComponent(o.id)+'/minimax-draft';
+    const amount=n=>Number(n).toLocaleString('sr-RS',{minimumFractionDigits:2,maximumFractionDigits:2})+' RSD';
+    try{
+      const data=await api(path);
+      if(!panel.isConnected||selectedId!==o.id)return;
+      const states={preview:'Spreman pregled',sending:'Ishod prenosa treba proveriti',attention:'Ishod prenosa treba proveriti',created:'Nacrt je sačuvan; čeka proveru',verified:'Nacrt je pročitan i proveren'};
+      panel.innerHTML=`<h3>Minimax · probni nacrt</h3><p><strong>${esc(states[data.status]||'Potrebna provera')}</strong>. Račun se ne izdaje.</p>
+        <div style="overflow-x:auto"><table><thead><tr><th>Artikal</th><th>Kol.</th><th>Cena sa PDV</th><th>Iznos</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td>${esc(r.name)}<br><small>${esc(r.sku)} ${esc(r.description)}</small></td><td>${esc(r.qty)}</td><td>${esc(amount(r.price))}</td><td>${esc(amount(r.value))}</td></tr>`).join('')}</tbody></table></div>
+        <p><strong>Ukupno: ${esc(amount(data.total))}</strong></p>
+        ${data.link?`<p><a href="${esc(data.link)}" target="_blank" rel="noopener noreferrer">Otvori postojeći nacrt ${esc(data.invoiceId)}</a></p>`:''}
+        ${data.sourceChanged?'<p>Porudžbina je izmenjena posle prenosa. Potrebna je ručna provera nacrta; novi se neće praviti.</p>':''}
+        ${!data.ready?'<p>Pristupni podaci za probnu vezu još nisu podešeni na serveru.</p>':''}
+        ${data.lastError?`<p>Oznaka za proveru: ${esc(data.lastError)}. Nemojte ponavljati prenos.</p>`:''}
+        ${data.ready&&!data.sourceChanged?(data.status==='preview'?'<button type="button" class="btn btn-primary" data-mm-create>Napravi probni nacrt</button>':`${!data.invoiceId?'<label>ID već postojećeg nacrta <input data-mm-id inputmode="numeric" pattern="[0-9]+"></label>':''}<button type="button" class="btn btn-secondary" data-mm-verify>Proveri postojeći nacrt</button>`):''}`;
+      const send=async(action)=>{
+        if(action==='create'&&!confirm('Napraviti jedan probni nacrt od '+amount(data.total)+'? Račun se ne izdaje.'))return;
+        const invoiceId=panel.querySelector('[data-mm-id]')?.value;
+        if(action==='verify'&&!data.invoiceId&&!/^[1-9]\d*$/.test(invoiceId||'')){notify('Unesite ID nacrta koji već postoji u Minimax-u.');return;}
+        setBusy(panel,true);
+        try{const result=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,confirm:true,previewHash:data.previewHash,invoiceId})});notify(result.status==='verified'?'Probni nacrt je proveren. Račun nije izdat.':'Osvežena je evidencija prenosa.','success');}
+        catch(error){notify(error.message);}
+        finally{if(panel.isConnected&&selectedId===o.id)await loadMinimaxPreview(o);}
+      };
+      panel.querySelector('[data-mm-create]')?.addEventListener('click',()=>send('create'));
+      panel.querySelector('[data-mm-verify]')?.addEventListener('click',()=>send('verify'));
+    }catch(error){if(panel.isConnected&&selectedId===o.id)panel.innerHTML='<h3>Minimax · probni nacrt</h3><p>'+esc(error.message)+'</p>';}
+  }
+
   function operationsForm(o){const v=o.operations||{};const local=(o.events||[]).some(e=>e.event_type==='local_delivery_approved')||o.courier==='Lična dostava';
     if(['rejected','cancelled'].includes(o.status)) {
       return `<div class="admin-box admin-operations-locked"><h3>Operativna evidencija — zaključana</h3><p>Porudžbina je ${o.status==='rejected'?'odbijena':'otkazana'}. Priprema, isporuka i štampanje nalepnice su obustavljeni. Sačuvani podaci i istorija ostaju dostupni za pregled.</p><div class="admin-info">

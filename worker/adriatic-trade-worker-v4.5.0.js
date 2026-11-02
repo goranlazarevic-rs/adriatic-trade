@@ -429,13 +429,19 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry|minimax-draft))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
   const action = match[2] || "";
   const order = await getOrderById(env.DB, orderId);
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
+  if (action === 'minimax-draft') return mmHandleDraft(request, env, order, origin);
+  if (request.method === 'POST' && await mmStagingEnabled(env)) {
+    await mmEnsureSchema(env.DB);
+    const active = await env.DB.prepare("SELECT status FROM minimax_drafts WHERE order_id=? AND status IN ('sending','attention','created')").bind(order.id).first();
+    if (active) return json({ok:false,error:'Prvo proverite ishod prenosa Minimax nacrta. Porudžbina je privremeno zaključana.'},409,origin);
+  }
 
   if (request.method === "POST" && action === "email-retry") {
     await env.DB.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, attempts=0 WHERE order_id=? AND status='attention' AND (first_attempt_at IS NULL OR first_attempt_at>?)")
@@ -671,6 +677,7 @@ async function handleAdmin(request, env, url, origin) {
     return json({ok:true,order:await getOrderById(env.DB,order.id)},200,origin);
   }
   if (request.method === "GET" && !action) {
+    if (await mmStagingEnabled(env)) order.minimax = {enabled:true,ready:mmCredentialsReady(env)};
     return json({ ok: true, order }, 200, origin);
   }
 
@@ -1873,7 +1880,8 @@ function buildOrder(data) {
       name: p.name,
       detail: p.detail,
       unitPrice,
-      lineTotal: unitPrice * qty
+      lineTotal: unitPrice * qty,
+      ...(Object.hasOwn(BUNDLE_COMPONENTS,sku) ? {packageVersion:'v1',bundleComponents:Object.entries(BUNDLE_COMPONENTS[sku]).map(([component,units])=>({sku:component,units,referenceUnitPrice:PRODUCTS[component].price}))} : {})
     };
   });
 
@@ -2168,4 +2176,221 @@ function courierCsv(orders,batch) {
   const cell=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
   const rows=orders.map(o=>[batch.id,batch.created_at,o.id,o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.delivery.method,o.goodsTotal,o.shipping,o.total,isBankLocalPayment(o)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total]);
   return '\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n');
+}
+
+// Admin draft pilot. Disabled unless an isolated database explicitly identifies
+// itself as staging. No issuing action, arbitrary API URL or automatic retry.
+const MM_ITEMS = {
+  '10086': [13473518,600,'Cvet soli 100 g – natron vrećica – BIO'],
+  '10012': [13473554,800,'Cvet soli 125 g - kutija - BIO'],
+  '10306': [13473557,299,'Sitna morska so 600 g - ZIP - BIO'],
+  '10307': [13473558,299,'Gruba morska so 600 g - ZIP - BIO'],
+  '10240': [13473560,550,'Sitna morska so 500 g - tuljak - BIO'],
+  'DOSTAVA': [13473586,420,'Dostava']
+};
+const MM_API = 'https://moj.minimax.rs/RS/API/api/';
+function mmDemand(ok,code) { if(!ok) throw new Error(code); }
+function mmCents(n) {
+  mmDemand(typeof n==='number' && Number.isFinite(n) && n>=0 && Number.isSafeInteger(Math.round(n*100)) && Math.abs(n*100-Math.round(n*100))<0.00001,'INVALID_AMOUNT');
+  return Math.round(n*100);
+}
+async function mmStagingEnabled(env) {
+  if(env.MINIMAX_MODE!=='draft' || env.MINIMAX_ENV!=='staging' || !env.DB) return false;
+  try {return (await env.DB.prepare("SELECT name FROM minimax_environment WHERE id=1").first())?.name==='minimax-staging';} catch {return false;}
+}
+function mmCredentialsReady(env) {
+  return env.MINIMAX_USERNAME==='adriatic-webshop' && ['MINIMAX_CLIENT_ID','MINIMAX_CLIENT_SECRET','MINIMAX_USERNAME','MINIMAX_PASSWORD'].every(k=>typeof env[k]==='string' && env[k].length>0 && env[k].length<=2000);
+}
+async function mmEnsureSchema(db) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS minimax_drafts (
+    order_id TEXT PRIMARY KEY, operation_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL, payload_json TEXT NOT NULL, preview_hash TEXT NOT NULL,
+    external_id INTEGER, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`).run();
+}
+// Allocate each saved package price in cents. Never reprice an accepted order.
+function mmAllocate(total,components) {
+  const weight=components.reduce((s,c)=>s+c.units*mmCents(c.referenceUnitPrice),0);
+  mmDemand(weight>0,'INVALID_PACKAGE');
+  const parts=components.map(c=>{
+    const product=total*c.units*mmCents(c.referenceUnitPrice);
+    mmDemand(Number.isSafeInteger(product),'INVALID_PACKAGE');
+    return {...c,amount:Math.floor(product/weight),remainder:product%weight};
+  });
+  const extra=total-parts.reduce((s,c)=>s+c.amount,0);
+  [...parts].sort((a,b)=>b.remainder-a.remainder||a.sku.localeCompare(b.sku)).slice(0,extra).forEach(c=>c.amount++);
+  return parts;
+}
+function mmBuildPlan(order,day=belgradeDateKey()) {
+  mmDemand(/^AT-MMTEST-[A-Z0-9-]{1,60}$/.test(order.id) && order.customer?.email==='minimax-test@example.invalid','TEST_ORDERS_ONLY');
+  mmDemand(order.status==='confirmed','ORDER_NOT_CONFIRMED');
+  mmDemand(order.payment==='TEST_BANK_TRANSFER','PAYMENT_MAPPING_REQUIRED');
+  mmDemand(order.operations?.paymentStatus==='unpaid','PAYMENT_ALREADY_RECORDED');
+  mmDemand(!(order.events||[]).some(e=>e.event_type==='security_flag') || order.operations?.riskReview==='approved','RISK_REVIEW_REQUIRED');
+  mmDemand(Array.isArray(order.items) && order.items.length>0 && order.items.length<=20,'INVALID_ITEMS');
+  mmDemand(/^\d{4}-\d{2}-\d{2}$/.test(day) && new Date(day+'T00:00:00Z').toISOString().slice(0,10)===day,'INVALID_DATE');
+  let goods=0,units=0; const rows=[],seen=new Set();
+  function row(sku,qty,price,description='') {
+    mmDemand(Object.hasOwn(MM_ITEMS,sku) && Number.isSafeInteger(qty) && qty>0 && qty<=200,'INVALID_ITEM');
+    const [id,,name]=MM_ITEMS[sku];
+    rows.push({RowNumber:rows.length+1,Item:{ID:id},ItemCode:sku,ItemName:name,Quantity:qty,UnitOfMeasurement:'kom',
+      Price:Number((price/100/1.2).toFixed(6)),PriceWithVAT:price/100,Value:price*qty/100,
+      VATPercent:20,VatRate:{ID:4},VatAccountingType:'3.2',Discount:0,DiscountPercent:0,
+      Warehouse:sku==='DOSTAVA'?null:{ID:40999},OtherTaxesAndDuties:'N',...(description?{Description:description}:{})});
+  }
+  for(const item of order.items) {
+    mmDemand(!seen.has(item.sku),'DUPLICATE_SKU');seen.add(item.sku);
+    mmDemand(Number.isSafeInteger(item.qty) && item.qty>0 && item.qty<=20,'INVALID_QUANTITY');units+=item.qty;
+    const unit=mmCents(item.unitPrice); mmDemand(unit>0 && unit<=2000000,'INVALID_AMOUNT');
+    mmDemand(mmCents(item.lineTotal)===unit*item.qty,'LINE_TOTAL_MISMATCH');goods+=unit*item.qty;
+    if(Object.hasOwn(BUNDLE_COMPONENTS,item.sku)) {
+      mmDemand(item.packageVersion==='v1' && Array.isArray(item.bundleComponents),'PACKAGE_SNAPSHOT_REQUIRED');
+      const expected=Object.entries(BUNDLE_COMPONENTS[item.sku]).sort();
+      const actual=[...item.bundleComponents].sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
+      mmDemand(actual.length===expected.length && actual.every((c,i)=>c.sku===expected[i][0] && c.units===expected[i][1] && c.referenceUnitPrice===MM_ITEMS[c.sku]?.[1]),'INVALID_PACKAGE_SNAPSHOT');
+      for(const c of mmAllocate(unit,actual)) {
+        const p=Math.floor(c.amount/c.units),remainder=c.amount%c.units;
+        if(c.units>remainder)row(c.sku,(c.units-remainder)*item.qty,p,`Paket ${item.sku}; cena paketa ${item.unitPrice} RSD`);
+        if(remainder)row(c.sku,remainder*item.qty,p+1,`Paket ${item.sku}; cena paketa ${item.unitPrice} RSD`);
+      }
+    } else {mmDemand(item.sku!=='DOSTAVA','INVALID_ITEM');row(item.sku,item.qty,unit);}
+  }
+  mmDemand(units<=20 && mmCents(order.goodsTotal)===goods,'GOODS_TOTAL_MISMATCH');
+  const shipping=mmCents(order.shipping),total=mmCents(order.total);
+  mmDemand([0,42000].includes(shipping) && total===goods+shipping && total<=20000000,'ORDER_TOTAL_MISMATCH');
+  if(shipping)row('DOSTAVA',1,shipping);
+  mmDemand(rows.reduce((s,r)=>s+mmCents(r.Value),0)===total,'ALLOCATION_MISMATCH');
+  const payload={Status:'O',InvoiceType:'R',PricesOnInvoice:'D',DocumentNumbering:{ID:77630},Customer:{ID:9775669},Employee:{ID:408672},Currency:{ID:2},
+    DateIssued:day,DateTransaction:day,DateTransactionFrom:day,DateDue:day,
+    AddresseeName:'API probni kupac',AddresseeAddress:'/',AddresseePostalCode:'21208',AddresseeCity:'Sremska Kamenica',AddresseeCountry:{ID:3},
+    Rabate:0,ExchangeRate:1,RecurringInvoice:'N',InvoiceForPeriod:'N',ForwardToCRF:'N',ForwardToSEF:'Zbirno',
+    DocumentReference:`WEBSHOP:${order.id}`,DescriptionAbove:'PROBA API - NACRT. Ne izdavati. Nije stvarna porudžbina.',IssuedInvoiceRows:rows,
+    IssuedInvoicePaymentMethods:[{PaymentMethod:{ID:622053},Amount:order.total,AmountInDomesticCurrency:order.total,AlreadyPaid:'N'}]};
+  return {payload,total:order.total};
+}
+function mmSource(order) {
+  return JSON.stringify({id:order.id,status:order.status,updatedAt:order.updatedAt,items:order.items,goodsTotal:order.goodsTotal,
+    shipping:order.shipping,total:order.total,payment:order.payment,customer:order.customer,delivery:order.delivery,
+    revision:order.operationsRevision,operations:order.operations,security:(order.events||[]).filter(e=>e.event_type==='security_flag')});
+}
+async function mmHash(text) {return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(n=>n.toString(16).padStart(2,'0')).join('');}
+function mmView(job,plan,hash,changed=false) {
+  return {ok:true,status:job?.status||'preview',previewHash:hash,sourceChanged:changed,invoiceId:job?.external_id||null,
+    link:job?.external_id?`https://moj.minimax.rs/RS/VA/WebUI/IzdanRacun/IzdanRacunView.aspx?iracid=${job.external_id}&pgat=pgatv`:null,
+    lastError:job?.last_error||null,total:plan.total,
+    rows:plan.payload.IssuedInvoiceRows.map(r=>({sku:r.ItemCode,name:r.ItemName,qty:r.Quantity,price:r.PriceWithVAT,value:r.Value,description:r.Description||''}))};
+}
+async function mmReadBody(request) {
+  mmDemand((request.headers.get('Content-Type')||'').split(';')[0]==='application/json','INVALID_REQUEST');
+  mmDemand(request.body,'INVALID_REQUEST'); const reader=request.body.getReader(),decoder=new TextDecoder();let size=0,text='';
+  try {while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;mmDemand(size<=8192,'REQUEST_TOO_LARGE');text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();return JSON.parse(text);} catch {throw new Error('INVALID_REQUEST');} finally {await reader.cancel().catch(()=>{});}
+}
+async function mmRequest(url,options) {
+  const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),15000);
+  try {
+    const response=await fetch(url,{...options,redirect:'manual',signal:abort.signal});
+    mmDemand(response.ok,'MINIMAX_HTTP_ERROR');
+    const text=await response.text();mmDemand(text.length<2000000,'MINIMAX_INVALID_RESPONSE');
+    return {status:response.status,headers:response.headers,text};
+  } catch(error) {throw new Error(['MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE'].includes(error.message)?error.message:abort.signal.aborted?'MINIMAX_TIMEOUT':'MINIMAX_NETWORK_ERROR');}
+  finally {clearTimeout(timer);}
+}
+function mmJson(text) {try{return JSON.parse(text);}catch {throw new Error('MINIMAX_INVALID_RESPONSE');}}
+async function mmLogin(env) {
+  mmDemand(mmCredentialsReady(env),'MINIMAX_SECRETS_REQUIRED');
+  const response=await mmRequest('https://moj.minimax.rs/RS/AUT/oauth20/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},
+    body:new URLSearchParams({client_id:env.MINIMAX_CLIENT_ID,client_secret:env.MINIMAX_CLIENT_SECRET,username:env.MINIMAX_USERNAME,password:env.MINIMAX_PASSWORD,grant_type:'password',scope:'minimax.rs'}).toString()});
+  const auth=mmJson(response.text);mmDemand(typeof auth.access_token==='string' && auth.access_token.length>0 && String(auth.token_type).toLowerCase()==='bearer','MINIMAX_INVALID_AUTH');
+  return auth.access_token;
+}
+async function mmGet(token,path) {
+  const result=await mmRequest(MM_API+path,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});
+  return mmJson(result.text);
+}
+async function mmPreflight(token,payload) {
+  const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
+  mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
+  const data=await mmGet(token,'orgs/81179/items/pricelists?CustomerId=9775669');
+  mmDemand(Array.isArray(data.Rows) && Array.isArray(data.ValidationMessages) && !data.ValidationMessages.length,'MINIMAX_INVALID_PRICELIST');
+  for(const sku of new Set(payload.IssuedInvoiceRows.map(r=>r.ItemCode))) {
+    const [id,gross]=MM_ITEMS[sku];
+    const rows=data.Rows.filter(r=>r.Item?.ID===id && r.Customer?.ID===9775669 && r.Warehouse==null);
+    mmDemand(rows.length===1 && rows[0].Code===sku && rows[0].UnitOfMeasurement==='kom' && mmCents(rows[0].PriceWithVAT)===gross*100 &&
+      typeof rows[0].PriceWithoutVAT==='number' && Math.abs(rows[0].PriceWithoutVAT-gross/1.2)<=0.000001,'MINIMAX_CUSTOMER_PRICE_CHANGED');
+  }
+}
+function mmLocation(value) {
+  try {
+    const url=new URL(value,MM_API),match=url.pathname.match(/^\/(?:RS\/API\/)?api\/orgs\/81179\/issuedinvoices\/([1-9]\d*)\/?$/i),id=Number(match?.[1]);
+    const params=[...url.searchParams.entries()];
+    mmDemand(url.origin==='https://moj.minimax.rs' && !url.username && !url.password && !url.hash && Number.isSafeInteger(id) && id>0 &&
+      (!params.length || (params.length===1 && params[0][0]==='id' && params[0][1]===String(id))),'MINIMAX_LOCATION_UNCERTAIN');return id;
+  }catch {throw new Error('MINIMAX_LOCATION_UNCERTAIN');}
+}
+function mmVerify(actual,expected,id) {
+  mmDemand(actual?.IssuedInvoiceId===id && actual.Status==='O' && !(actual.InvoiceNumber>0),'MINIMAX_NOT_MATCHING_DRAFT');
+  for(const key of ['Customer','DocumentNumbering','Employee','Currency','AddresseeCountry'])mmDemand(actual[key]?.ID===expected[key].ID,'MINIMAX_HEADER_MISMATCH');
+  for(const key of ['DocumentReference','PricesOnInvoice','InvoiceType','Rabate','ExchangeRate','AddresseeName','AddresseeAddress','AddresseePostalCode','AddresseeCity','DescriptionAbove'])mmDemand(actual[key]===expected[key],'MINIMAX_HEADER_MISMATCH');
+  for(const key of ['DateIssued','DateTransaction','DateTransactionFrom','DateDue'])mmDemand(typeof actual[key]==='string' && actual[key].slice(0,10)===expected[key],'MINIMAX_DATE_MISMATCH');
+  mmDemand(Array.isArray(actual.IssuedInvoiceRows) && actual.IssuedInvoiceRows.length===expected.IssuedInvoiceRows.length,'MINIMAX_ROWS_MISMATCH');
+  for(const row of expected.IssuedInvoiceRows) {
+    const matches=actual.IssuedInvoiceRows.filter(r=>r.RowNumber===row.RowNumber);mmDemand(matches.length===1,'MINIMAX_ROWS_MISMATCH');const r=matches[0];
+    mmDemand(r.Item?.ID===row.Item.ID && r.ItemCode===row.ItemCode && r.Quantity===row.Quantity && r.UnitOfMeasurement==='kom' && (r.Description||'')===(row.Description||''),'MINIMAX_ROWS_MISMATCH');
+    mmDemand(mmCents(r.Value)===mmCents(row.Value) && mmCents(r.PriceWithVAT)===mmCents(row.PriceWithVAT) && typeof r.Price==='number' && Math.abs(r.Price-row.Price)<=0.000001,'MINIMAX_AMOUNT_MISMATCH');
+    mmDemand(r.Discount===0 && r.DiscountPercent===0 && r.VATPercent===20 && r.VatRate?.ID===4 && r.VatAccountingType==='3.2' && (r.Warehouse?.ID||null)===(row.Warehouse?.ID||null) && r.AdditionalWarehouse==null,'MINIMAX_TAX_OR_WAREHOUSE_MISMATCH');
+  }
+  const p=actual.IssuedInvoicePaymentMethods;
+  mmDemand(Array.isArray(p) && p.length===1 && p[0].PaymentMethod?.ID===622053 && p[0].AlreadyPaid==='N' && mmCents(p[0].Amount)===mmCents(expected.IssuedInvoicePaymentMethods[0].Amount) && mmCents(p[0].AmountInDomesticCurrency)===mmCents(p[0].Amount),'MINIMAX_PAYMENT_MISMATCH');
+}
+async function mmHandleDraft(request,env,order,origin) {
+  if(!await mmStagingEnabled(env))return json({ok:false,error:'Minimax probni prenos nije uključen.'},404,origin);
+  if(!['GET','POST'].includes(request.method))return json({ok:false,error:'Method not allowed'},405,origin);
+  await mmEnsureSchema(env.DB);
+  let job=await env.DB.prepare('SELECT * FROM minimax_drafts WHERE order_id=?').bind(order.id).first();
+  try {
+    const source=mmSource(order);
+    const plan=job?JSON.parse(job.payload_json):{...mmBuildPlan(order),source};
+    const hash=job?.preview_hash||await mmHash(JSON.stringify(plan));
+    const changed=plan.source!==source;
+    if(request.method==='GET')return json({...mmView(job,plan,hash,changed),ready:mmCredentialsReady(env)},200,origin);
+    const body=await mmReadBody(request);
+    mmDemand(body && ['create','verify'].includes(body.action) && body.confirm===true,'CONFIRMATION_REQUIRED');
+    if(body.action==='create' && job)return json({...mmView(job,plan,hash,changed),ready:mmCredentialsReady(env)},200,origin);
+    mmDemand(!changed,'ORDER_CHANGED_AFTER_TRANSFER');
+    if(body.action==='create')mmDemand(body.previewHash===hash,'PREVIEW_EXPIRED');
+    else mmDemand(job,'NO_PREVIOUS_ATTEMPT');
+    const token=await mmLogin(env);
+    if(body.action==='create') {
+      await mmPreflight(token,plan.payload);
+      const now=new Date().toISOString(),revision=order.operationsRevision;
+      const result=await env.DB.batch([
+        env.DB.prepare(`INSERT OR IGNORE INTO minimax_drafts (order_id,operation_key,status,payload_json,preview_hash,created_at,updated_at)
+          SELECT id,?,'sending',?,?,?,? FROM orders WHERE id=? AND status=? AND updated_at=? AND items_json=? AND goods_total=? AND shipping=? AND total=? AND payment=?
+          AND (SELECT revision FROM order_operations WHERE order_id=orders.id)=?`).bind(`minimax:draft:${order.id}`,JSON.stringify(plan),hash,now,now,order.id,order.status,order.updatedAt,JSON.stringify(order.items),order.goodsTotal,order.shipping,order.total,order.payment,revision),
+        env.DB.prepare(`INSERT INTO order_events (order_id,event_type,note,created_at) SELECT ?,'minimax_draft_attempt','Probni prenos nacrta je zabeležen.',? WHERE changes()=1`).bind(order.id,now)
+      ]);
+      job=await env.DB.prepare('SELECT * FROM minimax_drafts WHERE order_id=?').bind(order.id).first();
+      if(!result[0].meta.changes){mmDemand(job,'ORDER_CHANGED_RELOAD_PREVIEW');return json(mmView(job,JSON.parse(job.payload_json),job.preview_hash),200,origin);}
+      // Once sending is durable, every outcome (including HTTP errors) blocks a
+      // second POST. The only continuation is reading an existing draft by ID.
+      try {
+        const res=await mmRequest(MM_API+'orgs/81179/issuedinvoices',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(plan.payload)});
+        mmDemand(res.status===201,'MINIMAX_CREATE_UNCERTAIN');const id=mmLocation(res.headers.get('Location'));
+        await env.DB.prepare("UPDATE minimax_drafts SET external_id=?,status='created',updated_at=? WHERE order_id=?").bind(id,new Date().toISOString(),order.id).run();
+        job.external_id=id;
+      }catch(error){await env.DB.prepare("UPDATE minimax_drafts SET status='attention',last_error=?,updated_at=? WHERE order_id=?").bind(error.message,new Date().toISOString(),order.id).run();throw error;}
+    }
+    const id=job.external_id||Number(body.invoiceId);
+    mmDemand(Number.isSafeInteger(id) && id>0,'EXISTING_INVOICE_ID_REQUIRED');
+    const actual=await mmGet(token,`orgs/81179/issuedinvoices/${id}`);mmVerify(actual,plan.payload,id);
+    const now=new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE minimax_drafts SET status='verified',external_id=?,last_error=NULL,updated_at=? WHERE order_id=?").bind(id,now,order.id),
+      env.DB.prepare("INSERT INTO order_events (order_id,event_type,note,created_at) VALUES (?,'minimax_draft_verified',?,?)").bind(order.id,`Proveren probni nacrt ${id}; nije izdat.`,now)
+    ]);
+    return json(mmView({...job,status:'verified',external_id:id,last_error:null},plan,hash),200,origin);
+  }catch(error) {
+    // Errors are controlled codes only; never return provider text or secrets.
+    return json({ok:false,error:'Minimax: '+(/^[A-Z_]{3,70}$/.test(error.message)?error.message:'CHECK_REQUIRED')+'. Ne ponavljajte prenos; osvežite pregled i proverite postojeći nacrt.'},409,origin);
+  }
 }
