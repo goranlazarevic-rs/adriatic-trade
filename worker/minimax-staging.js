@@ -12,12 +12,12 @@ export default {
     let response;
     if(url.pathname.startsWith('/admin/')) {
       const origin=request.headers.get('Origin');
-      if(origin&&origin!==ORIGIN)return new Response('Forbidden',{status:403});
-      // This pilot cannot change an order, send emails, upload receipts, export
-      // courier jobs or accept public checkouts. Only the draft action is writable.
-      const read=request.method==='GET' && /^\/admin\/(?:orders(?:\/[^/]+(?:\/minimax-draft)?)?|metrics|attention|courier-exports|inquiries)$/.test(url.pathname);
-      const write=request.method==='POST' && /^\/admin\/orders\/AT-MMTEST-[A-Z0-9-]+\/minimax-draft$/.test(url.pathname);
-      if(!read&&!write)return new Response(JSON.stringify({ok:false,error:'U probnom panelu dozvoljeni su pregled i Minimax nacrti.'}),{status:403,headers:{'Content-Type':'application/json'}});
+      if((request.method!=='GET'&&origin!==ORIGIN)||(origin&&origin!==ORIGIN))return new Response('Forbidden',{status:403});
+      // The isolated pilot permits quota controls and fixed synthetic admissions.
+      // Public checkout, customer emails, shipping and issuing stay blocked.
+      const read=request.method==='GET' && /^\/admin\/(?:availability|probe-orders|orders(?:\/[^/]+(?:\/minimax-draft)?)?|metrics|attention|courier-exports|inquiries)$/.test(url.pathname);
+      const write=request.method==='POST' && (/^\/admin\/orders\/AT-MMTEST-[A-Z0-9-]+\/minimax-draft$/.test(url.pathname) || url.pathname==='/admin/availability' || /^\/admin\/probe-orders(?:\/AT-MMTEST-FLOW-(?:STANDARD|PAKET|BESPLATNA|GURMAN)\/confirm)?$/.test(url.pathname));
+      if(!read&&!write)return new Response(JSON.stringify({ok:false,error:'Probni panel dozvoljava kvote, sintetičke porudžbine i Minimax nacrte.'}),{status:403,headers:{'Content-Type':'application/json'}});
       const headers=new Headers(request.headers);headers.set('Origin','https://adriatictrade.rs');
       response=await orders.fetch(new Request(request,{headers}),{DB:env.DB,ADMIN_TOKEN:env.ADMIN_TOKEN,
         MINIMAX_ENV:env.MINIMAX_ENV,MINIMAX_MODE:env.MINIMAX_MODE,MINIMAX_CLIENT_ID:env.MINIMAX_CLIENT_ID,

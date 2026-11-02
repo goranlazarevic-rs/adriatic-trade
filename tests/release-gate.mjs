@@ -10,6 +10,9 @@ const require = createRequire(import.meta.url);
 const {parse} = require(process.env.YAML_MODULE_PATH || 'yaml');
 const workflow = parse(fs.readFileSync('.github/workflows/deploy-worker.yml', 'utf8'));
 const {validate, deploy} = workflow.jobs;
+for(const file of ['tests/minimax-integrated-runtime.mjs','tests/minimax-integrated-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
+assert.ok(workflow.on.pull_request.paths.includes('assets/js/admin-probe.js'));
+assert.ok(workflow.on.pull_request.paths.includes('docs/MINIMAX-INTEGRATED-PROBA.md'));
 const inputs = workflow.on.workflow_dispatch.inputs;
 
 assert.deepEqual(workflow.on.pull_request.paths, workflow.on.push.paths);
@@ -17,6 +20,8 @@ for(const file of ['checkout.html','kontakt.html','saradnja.html','kontakt-hvala
 for(const file of ['tests/inquiry-security.mjs','tests/inquiry-runtime.mjs','tests/inquiry-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
 assert.ok(workflow.on.pull_request.paths.includes('scripts/check-worker-release.sh'));
 assert.ok(workflow.on.pull_request.paths.includes('cloudflare-d1-checkout-availability-v1.sql'));
+for(const file of ['cloudflare-d1-admin-availability-v1.sql','assets/js/admin-availability.js','assets/css/admin.css'])assert.ok(workflow.on.pull_request.paths.includes(file));
+for(const file of ['tests/admin-availability.mjs','tests/admin-availability-runtime.mjs','tests/admin-availability-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file));
 assert.deepEqual(workflow.on.pull_request.branches, ['main']);
 assert.deepEqual(workflow.on.push.branches, ['main']);
 assert.equal(inputs.deploy_production.type, 'boolean');
