@@ -43,7 +43,7 @@
     const res=await fetch(API+path,{...options,headers,credentials:'omit'});
     let data={};try{data=await res.json()}catch{}
     if(res.status===401){if(token===requestToken){sessionStorage.removeItem(KEY);token='';showLogin('Administratorski ključ nije prihvaćen.')}throw new Error('Unauthorized')}
-    if(!res.ok||data.ok===false){const error=new Error(data.error||'Greška pri komunikaciji sa serverom.');error.status=res.status;error.code=data.code;throw error;}
+    if(!res.ok||data.ok===false){const error=new Error(data.error||'Greška pri komunikaciji sa serverom.');error.status=res.status;error.code=data.code;error.step=data.step;error.sku=data.sku;error.upstreamStatus=data.upstreamStatus;throw error;}
     return data;
   }
 

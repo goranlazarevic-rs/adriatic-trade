@@ -14,6 +14,8 @@ export function stockHarness(){
   const state={mode:'ok',requests:[],reads:0};
   h.ctx.fetch=async(url,options)=>{
     state.requests.push({url,method:options.method});assert.equal(options.redirect,'manual');assert.equal(new URL(url).origin,'https://moj.minimax.rs');
+    const step=url.endsWith('/oauth20/token')?'authentication':url.includes('/currentuser/orgs')?'organisation':'stock';
+    if(state.httpStep===step)return new Response('synthetic provider secret body',{status:state.httpStatus,headers:{'X-Private':'synthetic secret header'}});
     if(url.endsWith('/oauth20/token'))return Response.json({access_token:'synthetic-token',token_type:'bearer'});
     assert.equal(options.method,'GET','No external mutation after OAuth');
     if(url.includes('/currentuser/orgs'))return Response.json({Rows:[{Organisation:{ID:state.mode==='org'?42:81179},APIAccess:'D'}]});

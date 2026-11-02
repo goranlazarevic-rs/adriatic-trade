@@ -32,6 +32,13 @@ try {
     h.mm.mode='zero';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/0 kom\./);
     h.mm.mode='absent';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/Nije prijavljeno/);
     h.mm.mode='network';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Zalihe nisu učitane'));assert.equal(await section.locator('article').count(),0,'Failed refresh clears old snapshot');
+    assert.match(await message.textContent(),/Korak: čitanje zaliha/);assert.ok(!(await message.textContent()).includes('Minimax HTTP'));
+    h.mm.mode='ok';h.mm.httpStep='stock';h.mm.httpStatus=403;
+    await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.includes('Minimax HTTP 403'));
+    assert.match(await message.textContent(),/Korak: čitanje zaliha · SKU 10\d{3} · Minimax HTTP 403 · Kod: MINIMAX_HTTP_ERROR/);
+    assert.ok(!(await section.textContent()).includes('synthetic'));assert.ok(!(await section.textContent()).includes('secret'));assert.equal(await section.locator('article').count(),0);
+    assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'Diagnostic fits narrow screens');
+    h.mm.httpStep=null;
     h.mm.mode='negative';await button.click();await page.waitForFunction(()=>document.querySelector('[data-minimax-stock-message]').textContent.startsWith('Očitano:'));assert.match(await section.textContent(),/Negativno stanje/);
     assert.equal(JSON.stringify(h.sql.prepare('SELECT * FROM checkout_stock').all()),before);assert.equal(h.sql.prepare('SELECT mode FROM checkout_intake').get().mode,'paused');
     assert.equal(await section.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'No stock panel overflow');
@@ -39,6 +46,6 @@ try {
     hold=true;const waiting=new Promise(resolve=>entered=resolve);await button.click();await waiting;
     await page.locator('[data-admin-logout]').click();const lateResponse=page.waitForResponse(res=>res.url().endsWith('/admin/minimax-stock'));release();await lateResponse;
     assert.equal(await section.isVisible(),false);assert.equal(await section.locator('[data-minimax-stock-content]').textContent(),'','Late response must not reveal signed-out data');
-    assert.deepEqual(errors,[]);await page.close();console.log(`PASS stock browser ${width}px: explicit read, zero/unknown/negative, failed refresh, unchanged quota/pause, late logout response and layout`);
+    assert.deepEqual(errors,[]);await page.close();console.log(`PASS stock browser ${width}px: explicit read, zero/unknown/negative, safe HTTP diagnostics, failed refresh, unchanged quota/pause, late logout response and layout`);
   }
 }finally{await browser.close();}

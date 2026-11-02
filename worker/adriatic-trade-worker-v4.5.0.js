@@ -118,7 +118,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.10.1",
+        version: "4.10.2",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -2386,10 +2386,14 @@ async function mmRequest(url,options) {
   const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),15000);
   try {
     const response=await fetch(url,{...options,redirect:'manual',signal:abort.signal});
-    mmDemand(response.ok,'MINIMAX_HTTP_ERROR');
+    if(!response.ok)throw Object.assign(new Error('MINIMAX_HTTP_ERROR'),{upstreamStatus:response.status});
     const text=await response.text();mmDemand(text.length<2000000,'MINIMAX_INVALID_RESPONSE');
     return {status:response.status,headers:response.headers,text};
-  } catch(error) {throw new Error(['MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE'].includes(error.message)?error.message:abort.signal.aborted?'MINIMAX_TIMEOUT':'MINIMAX_NETWORK_ERROR');}
+  } catch(error) {
+    const safe=new Error(['MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE'].includes(error.message)?error.message:abort.signal.aborted?'MINIMAX_TIMEOUT':'MINIMAX_NETWORK_ERROR');
+    if(error.message==='MINIMAX_HTTP_ERROR' && Number.isInteger(error.upstreamStatus) && error.upstreamStatus>=300 && error.upstreamStatus<=599)safe.upstreamStatus=error.upstreamStatus;
+    throw safe;
+  }
   finally {clearTimeout(timer);}
 }
 function mmJson(text) {try{return JSON.parse(text);}catch {throw new Error('MINIMAX_INVALID_RESPONSE');}}
@@ -2421,14 +2425,21 @@ async function mmHandleStock(request,env,url,origin) {
   if(!await mmStagingEnabled(env))return json({ok:false,error:'Not found'},404,origin);
   if(request.method!=='GET')return json({ok:false,error:'Dozvoljeno je samo čitanje zaliha.'},405,origin,{Allow:'GET'});
   if(url.search)return json({ok:false,error:'Skladište i artikli su unapred određeni za ovu probu.'},400,origin);
+  // Diagnostics are fixed labels/status numbers only, never provider bodies or headers.
+  const observe=async(step,operation,sku=null)=>{
+    try{return await operation();}
+    catch(error){error.stockStep=step;error.stockSku=sku;throw error;}
+  };
   try {
-    const token=await mmLogin(env);
-    const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
-    mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
+    const token=await observe('authentication',()=>mmLogin(env));
+    await observe('organisation',async()=>{
+      const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
+      mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
+    });
     const startedAt=new Date().toISOString();
     // Item filters keep the pilot bounded regardless of the size of the full catalogue.
     // Mode=1 also requests items with historical stock. Missing rows are NOT zero.
-    const rows=await Promise.all(Object.entries(MM_ITEMS).filter(([sku])=>sku!=='DOSTAVA').map(async([sku,[id,,name]])=>{
+    const rows=await Promise.all(Object.entries(MM_ITEMS).filter(([sku])=>sku!=='DOSTAVA').map(([sku,[id,,name]])=>observe('stock',async()=>{
       const data=await mmGet(token,`orgs/81179/stocks?WarehouseId=40999&ItemID=${id}&Mode=1&CurrentPage=1&PageSize=100`);
       mmDemand(Array.isArray(data.Rows) && data.CurrentPageNumber===1 && Number.isSafeInteger(data.PageSize) && data.PageSize>0 &&
         data.PageSize<=100 && data.TotalRows===data.Rows.length && data.Rows.length<=1 &&
@@ -2438,12 +2449,15 @@ async function mmHandleStock(request,env,url,origin) {
       mmDemand(row.Item?.ID===id && row.ItemCode===sku && row.UnitOfMeasurement==='kom' && (row.BatchNumber==null||row.BatchNumber===''),'MINIMAX_INVALID_STOCK');
       mmDemand(row.Quantity===null || (Number.isSafeInteger(row.Quantity)&&Math.abs(row.Quantity)<=1000000000),'MINIMAX_INVALID_STOCK');
       return {sku,itemId:id,name,quantity:row.Quantity,state:row.Quantity===null?'unreported':'reported'};
-    }));
+    },sku)));
     return json({ok:true,readOnly:true,organisationId:81179,warehouseId:40999,warehouseName:'VP skladište',startedAt,readAt:new Date().toISOString(),rows},200,origin);
   }catch(error){
     const codes=new Set(['MINIMAX_SECRETS_REQUIRED','MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE','MINIMAX_TIMEOUT','MINIMAX_NETWORK_ERROR','MINIMAX_INVALID_AUTH','MINIMAX_ORG_ACCESS_REQUIRED','MINIMAX_INVALID_STOCK']);
     const code=codes.has(error.message)?error.message:'MINIMAX_STOCK_UNAVAILABLE';
-    return json({ok:false,code,error:'Stanje zaliha nije pouzdano učitano iz Minimax-a. Probne kvote nisu promenjene.'},502,origin);
+    const step=['authentication','organisation','stock'].includes(error.stockStep)?error.stockStep:'unknown';
+    const sku=Object.hasOwn(MM_ITEMS,error.stockSku||'')&&error.stockSku!=='DOSTAVA'?error.stockSku:null;
+    const upstreamStatus=Number.isInteger(error.upstreamStatus)&&error.upstreamStatus>=300&&error.upstreamStatus<=599?error.upstreamStatus:null;
+    return json({ok:false,code,step,sku,upstreamStatus,error:'Stanje zaliha nije pouzdano učitano iz Minimax-a. Probne kvote nisu promenjene.'},502,origin);
   }
 }
 function mmLocation(value) {

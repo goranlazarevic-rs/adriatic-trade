@@ -27,3 +27,21 @@ test('production disabled and wrong database marker never query Minimax',async()
   delete h.ctx.env.MINIMAX_MODE;
   const result=await h.ctx.run(new Request('https://test/admin/minimax-stock',{headers:{Origin:'https://adriatictrade.rs',Authorization:'Bearer synthetic-admin-token-for-tests-only'}}));assert.equal(result.status,404);
 });
+
+for(const [step,status] of [['authentication',400],['organisation',403],['stock',404],['stock',429],['stock',500]])test(`HTTP diagnostic identifies ${step} ${status} without provider content`,async()=>{
+  const h=setup();h.mm.httpStep=step;h.mm.httpStatus=status;
+  const before=JSON.stringify(h.sql.prepare('SELECT * FROM checkout_stock').all());
+  const response=await h.stock();assert.equal(response.status,502);
+  const data=await response.json();assert.equal(data.code,'MINIMAX_HTTP_ERROR');assert.equal(data.step,step);assert.equal(data.upstreamStatus,status);
+  assert.equal(data.rows,undefined);
+  if(step==='stock')assert.ok(['10012','10086','10240','10306','10307'].includes(data.sku));else assert.equal(data.sku,null);
+  assert.ok(!JSON.stringify(data).includes('synthetic'));assert.ok(!JSON.stringify(data).includes('secret'));
+  assert.equal(response.headers.get('X-Private'),null);assert.equal(response.headers.get('Location'),null);
+  assert.equal(JSON.stringify(h.sql.prepare('SELECT * FROM checkout_stock').all()),before);
+  if(step==='authentication')assert.equal(h.mm.requests.length,1);
+  if(step!=='stock')assert.equal(h.mm.reads,0);
+});
+test('non-HTTP failure has no invented upstream status',async()=>{
+  const h=setup();h.mm.mode='network';const data=await (await h.stock()).json();
+  assert.equal(data.step,'stock');assert.equal(data.code,'MINIMAX_NETWORK_ERROR');assert.equal(data.upstreamStatus,null);
+});

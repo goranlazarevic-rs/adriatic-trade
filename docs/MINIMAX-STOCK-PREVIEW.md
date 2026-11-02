@@ -1,6 +1,8 @@
 # Pregled zaliha iz Minimax-a
 
-Razvojni dodatak 2.11.2026, Worker 4.10.1, u objedinjenu probnu granu #19. Nije objavljen u produkciji. Staging mora zasebno da se ažurira posle uspešne validacije punog SHA.
+Razvojni dodatak 2.11.2026, Worker 4.10.2, u objedinjenu probnu granu #19. Nije objavljen u produkciji. Staging mora zasebno da se ažurira posle uspešne validacije punog SHA.
+
+Verzija 4.10.1 objavljena je na staging-u kroz Release Gate #51. Stvarno čitanje nije uspelo: vlasnik je dostavio 502 odgovor sa `MINIMAX_HTTP_ERROR`. To potvrđuje neuspešan uzvodni HTTP odgovor, ali ne identifikuje njegov status niti korak; uzrok još nije potvrđen. Verzija 4.10.2 dodaje samo dijagnostiku: fiksan naziv koraka (prijava, organizacija ili zalihe), poznati SKU ako je primenljiv i broj uzvodnog HTTP statusa. Telo, zaglavlja i tajne iz Minimax greške ne prenose se. Način i broj poziva ostaju isti. Sledeća proba čeka ovu staging objavu; ne menjati pristupne podatke na osnovu same generičke greške.
 
 ## Ponašanje panela
 
@@ -33,10 +35,10 @@ Kasnije automatsko računanje raspoloživosti zahteva odvojeno trajno usaglašav
 
 ## Automatizovane provere
 
-`tests/minimax-stock.mjs`: 16 testova uz SQLite koji izričito odbija svaki upis na stock ruti; postojeće kvote/revizija/pauza/porudžbine/journals ostaju netaknuti; 0/negativno/null/odsustvo, auth, origin, metoda, fiksni filteri, pogrešna organizacija, šifra/ID/jedinica/serija, duplikat/truncation/page, mreža/redirect/JSON i uklanjanje osetljivih polja.
+`tests/minimax-stock.mjs`: 22 testa uz SQLite koji izričito odbija svaki upis na stock ruti; postojeće kvote/revizija/pauza/porudžbine/journals ostaju netaknuti; 0/negativno/null/odsustvo, auth, origin, metoda, fiksni filteri, pogrešna organizacija, šifra/ID/jedinica/serija, duplikat/truncation/page, mreža/redirect/JSON i uklanjanje osetljivih polja.
 
 `tests/minimax-integrated-runtime.mjs`: pravi workerd/D1 i staging wrapper čitaju simulirano stock stanje, odbijaju neispravan odgovor/metodu/pristup, čuvaju kvote/reviziju/pauzu i ne kreiraju račun. Zadržane su sve postojeće zajedničke probe i oporavak neizvesnog nacrta.
 
 `tests/minimax-stock-browser.mjs`: pravi frontend, wrapper i Worker uz izolovani SQLite i simuliran Minimax na 1440/390/320 px: nema API poziva pri prijavi, ručno čitanje, nula/nepoznato/negativno, brisanje zastarelog prikaza nakon greške, nepromenjene kvote/pauza, kasni odgovor posle odjave i prelamanje prikaza.
 
-Automatizovane provere ne koriste stvarne Minimax podatke. Živo čitanje stanja čeka staging objavu i poređenje vlasnika.
+Automatizovane provere ne koriste stvarne Minimax podatke. Živo čitanje stanja u 4.10.1 nije uspelo; uzrok čeka dijagnostiku u 4.10.2 i poređenje vlasnika.
