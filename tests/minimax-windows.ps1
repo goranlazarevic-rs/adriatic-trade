@@ -46,7 +46,10 @@ function global:Read-Host {
         $env:MINIMAX_TEST_CHOICE = '2'
         $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $mock
         $joined = $output -join "`n"
-        if ($LASTEXITCODE -ne 0 -or $joined -notmatch 'REZULTAT: USPEH; nacrt 99999991') { throw ('Live fixture failed: ' + $joined) }
+        if ($LASTEXITCODE -ne 0 -or $joined -notmatch 'REZULTAT: USPEH; nacrt 99999991') {
+            if (Test-Path $env:MINIMAX_FIXTURE_TRACE_FILE) { Get-Content $env:MINIMAX_FIXTURE_TRACE_FILE | Write-Host }
+            throw ('Live fixture failed: ' + $joined)
+        }
         if ($joined -match 'SYNTHETIC-(CLIENT|USER|TOKEN|CODE)') { throw 'Credential appeared in output' }
         if ($attempt -eq 2 -and $joined -notmatch 'Postojeci nacrt') { throw 'Existing ID was not reused' }
     }

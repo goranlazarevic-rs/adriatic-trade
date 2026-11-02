@@ -11,8 +11,10 @@ globalThis.fetch = async (url, options) => {
   fs.appendFileSync(process.env.MINIMAX_FIXTURE_TRACE_FILE, `${options.method} ${parsed.pathname}\n`);
   if (parsed.pathname === '/RS/AUT/oauth20/token') {
     const p = new URLSearchParams(options.body);
-    if (p.get('client_id') !== 'SYNTHETIC-CODE' || p.get('client_secret') !== 'SYNTHETIC-CLIENT-SECRET' ||
-      p.get('username') !== 'adriatic-webshop' || p.get('password') !== 'SYNTHETIC-USER-SECRET-č') throw Error('Synthetic input mismatch');
+    const checks = {code:p.get('client_id') === 'SYNTHETIC-CODE', client:p.get('client_secret') === 'SYNTHETIC-CLIENT-SECRET',
+      user:p.get('username') === 'adriatic-webshop', password:p.get('password') === 'SYNTHETIC-USER-SECRET-č'};
+    fs.appendFileSync(process.env.MINIMAX_FIXTURE_TRACE_FILE, 'synthetic-input-checks ' + JSON.stringify(checks) + '\n');
+    if (!Object.values(checks).every(Boolean)) throw Error('Synthetic input mismatch');
     return Response.json({access_token:'SYNTHETIC-TOKEN',token_type:'bearer',expires_in:3600});
   }
   if (options.headers.Authorization !== 'Bearer SYNTHETIC-TOKEN') throw Error('Synthetic auth mismatch');

@@ -19,6 +19,7 @@ export async function main(args = process.argv.slice(2)) {
   // Credentials arrive only on stdin from the local secure prompt. They are
   // never command-line arguments, environment variables or a config file.
   if (process.stdin.isTTY) throw new Error('USE_LOCAL_SECURE_PROMPT');
+  process.stdin.setEncoding('utf8');
   let text = '';
   for await (const chunk of process.stdin) {
     text += chunk;
