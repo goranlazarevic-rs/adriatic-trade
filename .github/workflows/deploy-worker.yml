@@ -17,6 +17,8 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "tools/minimax-draft/**"
+      - "docs/MINIMAX-DRAFT-PROBA.md"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "cloudflare-d1-checkout-availability-v1.sql"
@@ -40,6 +42,8 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "tools/minimax-draft/**"
+      - "docs/MINIMAX-DRAFT-PROBA.md"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "cloudflare-d1-checkout-availability-v1.sql"
@@ -89,6 +93,7 @@ jobs:
           node tests/notification-outbox.mjs
           node tests/checkout-security.mjs
           node tests/checkout-availability.mjs
+          node --test tests/minimax-draft.mjs
           node tests/inquiry-security.mjs
 
       - name: Install isolated integration test dependencies

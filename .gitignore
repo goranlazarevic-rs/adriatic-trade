@@ -1,0 +1,8 @@
+# Local integration data and credentials must never be committed.
+.env
+.env.*
+!.env.example
+node_modules/
+.minimax-local/
+*.p12
+*.pfx
