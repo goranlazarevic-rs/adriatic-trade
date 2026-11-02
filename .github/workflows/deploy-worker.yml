@@ -14,12 +14,15 @@ on:
       - "assets/js/inquiry-forms.js"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
+      - "assets/js/admin-availability.js"
+      - "assets/css/admin.css"
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "cloudflare-d1-checkout-availability-v1.sql"
+      - "cloudflare-d1-admin-availability-v1.sql"
       - "admin.html"
       - "checkout.html"
       - "dostava-placanje.html"
@@ -37,12 +40,15 @@ on:
       - "assets/js/inquiry-forms.js"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
+      - "assets/js/admin-availability.js"
+      - "assets/css/admin.css"
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "cloudflare-d1-checkout-availability-v1.sql"
+      - "cloudflare-d1-admin-availability-v1.sql"
       - "admin.html"
       - "checkout.html"
       - "dostava-placanje.html"
@@ -85,6 +91,7 @@ jobs:
       - name: Regression tests
         run: |
           node tests/admin-operations.mjs
+          node tests/admin-availability.mjs
           node tests/local-delivery.mjs
           node tests/notification-outbox.mjs
           node tests/checkout-security.mjs
@@ -103,15 +110,18 @@ jobs:
         run: |
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/cloudflare-runtime.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/checkout-availability-runtime.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/admin-availability-runtime.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/inquiry-runtime.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/inquiry-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/local-delivery-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/admin-inquiries-browser.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/admin-availability-browser.mjs
 
       - name: Validate JavaScript syntax
         run: |
           node --check worker/adriatic-trade-worker-v4.5.0.js
           node --check assets/js/admin.js
+          node --check assets/js/admin-availability.js
           node --check assets/js/inquiry-forms.js
 
       - name: Validate release version and required bindings
@@ -190,7 +200,7 @@ jobs:
           APPROVED_SHA: ${{ inputs.approved_sha }}
         run: bash scripts/check-worker-release.sh
 
-      - name: Deploy Worker v4.9.0
+      - name: Deploy Worker v4.10.0
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -201,11 +211,12 @@ jobs:
           for ATTEMPT in 1 2 3 4 5 6; do
             RESPONSE=$(curl --fail-with-body --silent --show-error \
               -H 'Cache-Control: no-cache' \
-              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.9.0-$ATTEMPT")
+              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.10.0-$ATTEMPT")
             printf '%s\n' "$RESPONSE"
-            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.9.0" and .database == true and .receipts == true and .security == true and .inquiries == true'; then
+            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.10.0" and .database == true and .receipts == true and .security == true and .inquiries == true'; then
               exit 0
             fi
             sleep 5
           done
           exit 1
+

@@ -17,6 +17,8 @@ for(const file of ['checkout.html','kontakt.html','saradnja.html','kontakt-hvala
 for(const file of ['tests/inquiry-security.mjs','tests/inquiry-runtime.mjs','tests/inquiry-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
 assert.ok(workflow.on.pull_request.paths.includes('scripts/check-worker-release.sh'));
 assert.ok(workflow.on.pull_request.paths.includes('cloudflare-d1-checkout-availability-v1.sql'));
+for(const file of ['cloudflare-d1-admin-availability-v1.sql','assets/js/admin-availability.js','assets/css/admin.css'])assert.ok(workflow.on.pull_request.paths.includes(file));
+for(const file of ['tests/admin-availability.mjs','tests/admin-availability-runtime.mjs','tests/admin-availability-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file));
 assert.deepEqual(workflow.on.pull_request.branches, ['main']);
 assert.deepEqual(workflow.on.push.branches, ['main']);
 assert.equal(inputs.deploy_production.type, 'boolean');
@@ -103,3 +105,4 @@ else exit 99; fi
 } finally {
   fs.rmSync(temp, {recursive: true, force: true});
 }
+

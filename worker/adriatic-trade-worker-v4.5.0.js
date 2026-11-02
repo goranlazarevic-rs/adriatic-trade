@@ -118,7 +118,7 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.9.0",
+        version: "4.10.0",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -162,6 +162,7 @@ export default {
         return json({ ok: false, error: "D1 baza nije povezana sa Worker-om." }, 503, origin);
       }
       try {
+        if (url.pathname === "/admin/availability") return await handleAvailability(request, env, origin);
         if (url.pathname === "/admin/inquiries" && request.method === "GET") {
           await ensureInquirySchema(env.DB);
           await pruneInquiries(env.DB);
@@ -1069,6 +1070,96 @@ const BUNDLE_COMPONENTS = {
   "PKT-KOMPLET": {"10240":1,"10012":1,"10086":1}
 };
 
+const PHYSICAL_SKUS = Object.keys(PRODUCTS).filter(sku=>!Object.hasOwn(BUNDLE_COMPONENTS,sku));
+const MAX_QUOTA = 10000;
+const MAX_QUOTA_INCREASE = 100;
+
+// One SQLite statement supplies a coherent snapshot even while orders arrive.
+// Missing migration/control/gate is an error, never an implicit open state.
+async function availabilitySnapshot(db) {
+  const row=await db.prepare(`SELECT revision,
+    (SELECT mode FROM checkout_intake WHERE id=1) mode,
+    (SELECT json_group_array(json_object('sku',sku,'state',state,'remaining',remaining,'updatedAt',updated_at,'reason',reason)) FROM checkout_stock) stock,
+    (SELECT json_group_array(json_object('operationId',operation_id,'action',action,'sku',sku,'before',json(before_json),'after',json(after_json),'reason',reason,'actor',actor,'createdAt',created_at))
+      FROM (SELECT * FROM checkout_control_events ORDER BY created_at DESC,operation_id DESC LIMIT 20)) history
+    FROM checkout_control WHERE id=1`).first();
+  if (!row || !Number.isSafeInteger(row.revision) || !['paused','open'].includes(row.mode)) throw Error('Availability control missing');
+  const stock=new Map(JSON.parse(row.stock).map(p=>[p.sku,p]));
+  const products=PHYSICAL_SKUS.map(sku=>({sku,name:PRODUCTS[sku].name,...(stock.get(sku)||{state:'unknown',remaining:null,updatedAt:null,reason:''})}));
+  const confirmed=p=>['available','unavailable'].includes(p.state)&&Number.isSafeInteger(p.remaining)&&p.remaining>=0&&p.remaining<=MAX_QUOTA;
+  const bundles=Object.entries(BUNDLE_COMPONENTS).map(([sku,components])=>{
+    const parts=Object.entries(components).map(([part,units])=>({product:products.find(p=>p.sku===part),units}));
+    return {sku,name:PRODUCTS[sku].name,components,remaining:parts.every(({product})=>confirmed(product))
+      ?Math.min(...parts.map(({product,units})=>product.state==='available'?Math.floor(product.remaining/units):0)):null};
+  });
+  return {revision:row.revision,mode:row.mode,products,bundles,history:JSON.parse(row.history),
+    canOpen:products.every(confirmed)&&products.some(p=>p.state==='available'&&p.remaining>0),
+    limits:{maxQuota:MAX_QUOTA,maxIncrease:MAX_QUOTA_INCREASE}};
+}
+
+async function availabilityHash(value) {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(n=>n.toString(16).padStart(2,'0')).join('');
+}
+
+async function handleAvailability(request, env, origin) {
+  const fail=(message,status=400,code='INVALID_AVAILABILITY_CHANGE')=>json({ok:false,code,error:message},status,origin);
+  if (!['GET','POST'].includes(request.method)) return fail('Metod nije dozvoljen.',405);
+  let snapshot;
+  try {snapshot=await availabilitySnapshot(env.DB);} catch {return fail('Kontrola dostupnosti nije spremna. Potrebna je odobrena migracija; prodaja se ne otvara kroz ovaj panel.',503,'AVAILABILITY_NOT_READY');}
+  if (request.method==='GET') return json({ok:true,...snapshot},200,origin);
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('Content-Type')||'')) return fail('Očekivan je JSON zahtev.',415);
+  let b;try {b=await readInquiryBody(request,4096);}catch(error){return fail(error.message==='large'?'Zahtev je prevelik.':'Neispravan JSON.',error.message==='large'?413:400);}
+  const allowed=['operationId','revision','action','sku','quantity','reason','confirmed','confirmation','increaseConfirmed','readinessConfirmed'];
+  if (!b || Array.isArray(b) || typeof b!=='object' || Object.keys(b).some(k=>!allowed.includes(k))) return fail('Nepoznata polja zahteva.');
+  if (typeof b.operationId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(b.operationId)||!Number.isSafeInteger(b.revision)||b.revision<0||
+    !['pause','open','quantity'].includes(b.action)||typeof b.reason!=='string'||b.reason.trim().length<5||b.reason.length>500||b.confirmed!==true) return fail('Potvrdite promenu i unesite razlog (5–500 znakova).');
+  const reason=b.reason.trim();
+  if (b.action==='quantity') {
+    if (!PHYSICAL_SKUS.includes(b.sku)||!Number.isSafeInteger(b.quantity)||b.quantity<0||b.quantity>MAX_QUOTA) return fail('Izaberite fizički proizvod i ceo broj od 0 do '+MAX_QUOTA+'.');
+  } else if (b.sku!==undefined||b.quantity!==undefined) return fail('Status prodaje ne menja količine.');
+  // Hash the complete canonical request. Replaying the same operation is safe,
+  // while reusing its ID with different content is always a conflict.
+  const canonical=JSON.stringify(Object.fromEntries(allowed.map(k=>[k,b[k]]).filter(([,v])=>v!==undefined)));
+  const hash=await availabilityHash(canonical);
+  const previous=()=>env.DB.prepare('SELECT request_hash FROM checkout_control_events WHERE operation_id=?').bind(b.operationId).first();
+  const replay=async old=>old.request_hash===hash?json({ok:true,duplicate:true,operationId:b.operationId},200,origin):fail('Oznaka zahteva je već iskorišćena za drugu promenu.',409,'OPERATION_CONFLICT');
+  const old=await previous();if (old) return replay(old);
+  if (snapshot.revision!==b.revision) return fail('Podaci su promenjeni. Osvežite pregled i ponovo proverite količine.',409,'STALE_AVAILABILITY');
+  let before,after;
+  if (b.action==='quantity') {
+    const p=snapshot.products.find(p=>p.sku===b.sku);
+    before={state:p.state,remaining:p.remaining};after={state:b.quantity>0?'available':'unavailable',remaining:b.quantity};
+    const increase=b.quantity-(p.state==='available'&&Number.isSafeInteger(p.remaining)?p.remaining:0);
+    if (increase>MAX_QUOTA_INCREASE) return fail('Najveće povećanje po potvrdi je '+MAX_QUOTA_INCREASE+' komada. Za veće izdvajanje potrebna je posebna operativna provera.');
+    if (increase>0&&(b.increaseConfirmed!==true||b.confirmation!==`${b.sku} ${b.quantity}`)) return fail('Potvrdite fizički proverenu slobodnu količinu i upišite SKU i novu kvotu.');
+    if (before.state===after.state&&before.remaining===after.remaining) return fail('Količina je već evidentirana.');
+  } else {
+    before={mode:snapshot.mode};after={mode:b.action==='open'?'open':'paused'};
+    if (before.mode===after.mode) return fail('Prodaja je već u izabranom statusu.');
+    if (b.action==='open'&&(!snapshot.canOpen||b.readinessConfirmed!==true||b.confirmation!=='OTVORI PRODAJU')) return fail('Otvaranje zahteva svih pet potvrđenih kvota, raspoloživu robu i izričitu potvrdu operativne spremnosti.');
+  }
+  const now=new Date().toISOString();
+  const actor='admin-key:'+(await availabilityHash(env.ADMIN_TOKEN)).slice(0,12);
+  const guard=env.DB.prepare(`INSERT INTO checkout_control_events(operation_id,request_hash,action,sku,revision_before,before_json,after_json,reason,actor,created_at,applied)
+    VALUES (?,?,?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM checkout_control WHERE id=1 AND revision=?)
+      AND EXISTS(SELECT 1 FROM checkout_intake WHERE id=1) THEN 1 ELSE 0 END)`)
+    .bind(b.operationId,hash,b.action,b.sku||null,b.revision,JSON.stringify(before),JSON.stringify(after),reason,actor,now,b.revision);
+  const update=b.action==='quantity'
+    ?env.DB.prepare(`INSERT INTO checkout_stock(sku,state,remaining,updated_at,reason) VALUES (?,?,?,?,?)
+      ON CONFLICT(sku) DO UPDATE SET state=excluded.state,remaining=excluded.remaining,updated_at=excluded.updated_at,reason=excluded.reason`)
+      .bind(b.sku,after.state,after.remaining,now,reason)
+    :env.DB.prepare('UPDATE checkout_intake SET mode=?,updated_at=?,reason=? WHERE id=1').bind(after.mode,now,reason);
+  try {await env.DB.batch([guard,update]);}
+  catch {
+    // Also recovers a successful commit whose response was lost.
+    const existing=await previous();if (existing) return replay(existing);
+    const current=await availabilitySnapshot(env.DB);
+    if (current.revision!==b.revision) return fail('Podaci su promenjeni tokom čuvanja. Osvežite pregled i proverite promenu.',409,'STALE_AVAILABILITY');
+    return fail('Promena nije potvrđena. Ponovite isti zahtev; ne pravite novu korekciju.',503,'AVAILABILITY_WRITE_FAILED');
+  }
+  return json({ok:true,duplicate:false,operationId:b.operationId},200,origin);
+}
+
 function stockRequirements(items) {
   const required = new Map();
   for (const {sku,qty} of items) {
@@ -1561,9 +1652,9 @@ function validateInquiry(body) {
   data.Saglasnost = 'Da';
   return {type,fields:data,submissionId:submissionId.toLowerCase()};
 }
-async function readInquiryBody(request) {
+async function readInquiryBody(request, maxBytes=20000) {
   // Bound actual streamed bytes even without Content-Length (chunked requests).
-  if (Number(request.headers.get('Content-Length'))>20000) throw new Error('large');
+  if (Number(request.headers.get('Content-Length'))>maxBytes) throw new Error('large');
   const reader = request.body?.getReader();
   if (!reader) throw new Error('json');
   let bytes = 0; const chunks = [];
@@ -1571,7 +1662,7 @@ async function readInquiryBody(request) {
     for (;;) {
       const {done,value} = await reader.read(); if (done) break;
       bytes += value.byteLength;
-      if (bytes>20000) { await reader.cancel(); throw new Error('large'); }
+      if (bytes>maxBytes) { await reader.cancel(); throw new Error('large'); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
@@ -2169,3 +2260,4 @@ function courierCsv(orders,batch) {
   const rows=orders.map(o=>[batch.id,batch.created_at,o.id,o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.delivery.method,o.goodsTotal,o.shipping,o.total,isBankLocalPayment(o)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total]);
   return '\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n');
 }
+

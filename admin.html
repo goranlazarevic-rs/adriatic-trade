@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <link rel="icon" href="/assets/img/favicon.png">
   <link rel="stylesheet" href="/assets/css/style.css?v=3.8.2">
-  <link rel="stylesheet" href="/assets/css/admin.css?v=1.5.0">
+  <link rel="stylesheet" href="/assets/css/admin.css?v=1.6.0">
 </head>
 <body class="admin-body">
   <header class="admin-header">
@@ -17,7 +17,7 @@
       </a>
       <div>
         <div class="admin-kicker">INTERNI PANEL</div>
-        <h1>Porudžbine i upiti</h1>
+        <h1>Prodaja, porudžbine i upiti</h1>
       </div>
       <button class="btn btn-secondary btn-small hidden" type="button" data-admin-logout>Odjavi se</button>
     </div>
@@ -41,6 +41,13 @@
     </section>
 
     <section class="admin-app hidden" data-admin-app>
+      <section class="admin-box admin-availability" aria-labelledby="availability-heading">
+        <h2 id="availability-heading">Dostupnost za webshop</h2>
+        <p>Preostale kvote u komadima, posle već primljenih porudžbina. Ovo nije knjigovodstveno stanje. Paketi i pojedinačni proizvodi troše iste komade.</p>
+        <div class="admin-action-row"><button class="btn btn-secondary" type="button" data-availability-refresh>Osveži dostupnost</button></div>
+        <p data-availability-message role="status" aria-live="polite">Pregled još nije učitan.</p>
+        <div data-availability-content></div>
+      </section>
       <section class="admin-box admin-inquiries" aria-labelledby="inquiries-heading">
         <h2 id="inquiries-heading">Isporuka kontakt i B2B upita</h2>
         <p>Poslednjih 100 upita iz evidencije do sedam dana, bez podataka pošiljalaca. „Prihvaćeno za slanje“ znači da je Resend prihvatio poruku; ne potvrđuje prijem u inbox.</p>
@@ -111,6 +118,8 @@
     </section>
   </main>
 
-  <script src="/assets/js/admin.js?v=4.8.1"></script>
+  <script src="/assets/js/admin-availability.js?v=1.0.0"></script>
+  <script src="/assets/js/admin.js?v=4.10.0"></script>
 </body>
 </html>
+

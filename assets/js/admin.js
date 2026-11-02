@@ -42,11 +42,14 @@
     const res=await fetch(API+path,{...options,headers,credentials:'omit'});
     let data={};try{data=await res.json()}catch{}
     if(res.status===401){if(token===requestToken){sessionStorage.removeItem(KEY);token='';showLogin('Administratorski ključ nije prihvaćen.')}throw new Error('Unauthorized')}
-    if(!res.ok||data.ok===false)throw new Error(data.error||'Greška pri komunikaciji sa serverom.');
+    if(!res.ok||data.ok===false){const error=new Error(data.error||'Greška pri komunikaciji sa serverom.');error.status=res.status;error.code=data.code;throw error;}
     return data;
   }
 
+  const availability=typeof createAvailabilityController==='function'?createAvailabilityController({api,esc,dt}):null;
+
   function showLogin(message=''){
+    availability?.reset();
     resetInquiries();
     login.classList.remove('hidden');app.classList.add('hidden');logout.classList.add('hidden');
     loginError.textContent=message;loginError.classList.toggle('hidden',!message);
@@ -97,7 +100,7 @@
       if(request===inquiryRequest){inquiryRefresh.disabled=false;inquiryList.setAttribute('aria-busy','false');}
     }
   }
-  async function loadPanel(){await Promise.all([loadOrders(true),loadInquiries()])}
+  async function loadPanel(){await Promise.all([loadOrders(true),loadInquiries(),availability?.load()])}
 
   async function loadOrders(selectFirst=false){
     const params=new URLSearchParams();
@@ -440,3 +443,4 @@
 
   if(token){showApp();loadPanel()}else showLogin();
 })();
+

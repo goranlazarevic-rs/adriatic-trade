@@ -14,7 +14,7 @@ Najmanje prelazno rešenje koje ograničava i paralelne porudžbine je postojeć
 
 Ovo je **posebno izdvojena webshop kvota**, ne knjigovodstvena zaliha, robno izdavanje ili sinhronizacija sa Minimaxom. Ne menja Minimax niti stvarni saldo skladišta. Kvota mora biti pokrivena operativno raspoloživom robom i izuzeta iz drugih prodajnih kanala. Sam prekidač „dostupno” bez količine ne bi sprečio da dva kupca istovremeno naruče poslednji komad.
 
-Ručno upravljanje u ovoj fazi radi kroz Cloudflare D1 konzolu uz postojeća administratorska prava. Nema novog javnog endpointa, lozinke u browseru, dodatnog servisa ili čekanja na Minimax API. Javni admin panel nema dugmad za kvote. Ako se kasnije doda UI, on mora koristiti zaštićen serverski API.
+U verziji 4.9.0 upravljanje radi kroz Cloudflare D1 konzolu uz postojeća administratorska prava. Razvojni predlog 4.10.0 dodaje pregled i zaštićen API u postojeći panel: [Administratorsko upravljanje webshop kvotama](ADMIN-AVAILABILITY.md). Novi panel i migracija još zahtevaju zasebnu odobrenu aktivaciju. SQL primeri ispod predstavljaju postupak za 4.9.0 i vanrednu intervenciju ovlašćenog D1 administratora; redovan rad posle aktivacije 4.10.0 sprovoditi kroz panel radi potvrda i revizijskog traga.
 
 ## Prihvatanje i ponavljanje
 
@@ -118,3 +118,4 @@ MINIFLARE_MODULE_PATH=/path/to/miniflare node tests/checkout-availability-runtim
 ```
 
 12 novih regresionih testova proverava dostupno/nedostupno/nepoznato stanje, pakete i zbir komponenti, falsifikovane podatke, pauzu/nedostajući schema/binding, rollback, izgubljen odgovor, email grešku, retry i konflikt sadržaja. Dodatna workerd/Miniflare provera koristi stvarni lokalni D1 batch: konkurentne porudžbine za poslednji komad, paralelne duplikate, rollback kasnijeg upisa i rad obe forme dok je prodaja pauzirana ili checkout migracija nedostaje. Spoljni pozivi su presretnuti i sintetički. Postojeće checkout, admin, lokalna dostava, outbox, inquiry, browser i release-gate regresije ostaju u CI.
+

@@ -17,3 +17,21 @@
 .admin-box textarea{width:100%;box-sizing:border-box}
 .admin-detail-body>.admin-box{margin-top:20px}
 @media(max-width:640px){.admin-toolbar>.field,.admin-toolbar>button{width:100%;flex-basis:100%}}
+
+.availability-status { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:16px; background:#eef5f5; border-radius:12px; margin:16px 0; }
+.availability-products { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.availability-product { border:1px solid #d6e2e3; border-radius:12px; padding:16px; min-width:0; }
+.availability-product h3 { font-size:17px; margin:0 0 12px; }
+.admin-availability p { margin:10px 0; }
+.admin-availability button { min-height:44px; white-space:normal; }
+.admin-availability { overflow-wrap:anywhere; }
+.availability-editor { border:2px solid #387a80; border-radius:12px; padding:20px; margin:20px 0; max-width:720px; }
+.availability-editor label { display:block; margin:14px 0; }
+.availability-editor input:not([type=checkbox]),.availability-editor textarea { display:block; width:100%; padding:12px; border:1px solid #9eb6b8; border-radius:8px; font:inherit; margin-top:8px; box-sizing:border-box; }
+.availability-editor .availability-check { display:flex; gap:12px; align-items:flex-start; }
+.availability-check input { width:22px; height:22px; flex-shrink:0; margin-top:2px; }
+.availability-bundles,.availability-history { padding-top:18px; }
+.admin-availability summary { cursor:pointer; padding:12px 0; font-weight:700; }
+.availability-history article { border-top:1px solid #d6e2e3; padding:12px 0; }
+@media(max-width:900px){.availability-products{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:600px){.availability-products{grid-template-columns:1fr;}.availability-status{align-items:stretch;flex-direction:column;}.availability-editor{padding:14px;}.admin-availability .admin-action-row{flex-direction:column;align-items:stretch;}}
