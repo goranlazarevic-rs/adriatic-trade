@@ -27,6 +27,12 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "ops/**"
+      - "scripts/build-web.mjs"
+      - "wrangler.web.json"
+      - "worker/web-assets.js"
+      - ".github/workflows/operations.yml"
+      - "docs/RECOVERY-RUNBOOK.md"
       - "tools/minimax-draft/**"
       - "tools/minimax-reconciliation/**"
       - "tools/minimax-staging/**"
@@ -68,6 +74,12 @@ on:
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "ops/**"
+      - "scripts/build-web.mjs"
+      - "wrangler.web.json"
+      - "worker/web-assets.js"
+      - ".github/workflows/operations.yml"
+      - "docs/RECOVERY-RUNBOOK.md"
       - "tools/minimax-draft/**"
       - "tools/minimax-reconciliation/**"
       - "tools/minimax-staging/**"
@@ -145,6 +157,8 @@ jobs:
           node tests/checkout-security.mjs
           node tests/checkout-availability.mjs
           node tests/production-migrations.mjs
+          node --test tests/operations.mjs
+          python3 tests/operations.py
           node --test tests/minimax-draft.mjs tests/minimax-admin.mjs tests/minimax-stock.mjs tests/minimax-reservations.mjs tests/minimax-handoff.mjs
           node tests/minimax-staging-policy.mjs
           node tests/inquiry-security.mjs
@@ -155,7 +169,9 @@ jobs:
           "$RUNNER_TEMP/qa/node_modules/.bin/playwright" install --with-deps chromium
 
       - name: Release gate policy regressions
-        run: YAML_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/yaml" node tests/release-gate.mjs
+        run: |
+          YAML_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/yaml" node tests/release-gate.mjs
+          YAML_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/yaml" node tests/operations-policy.mjs
 
       - name: Cloudflare runtime and browser regressions
         run: |

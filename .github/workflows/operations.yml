@@ -1,0 +1,177 @@
+name: Adriatic Trade backups, monitoring and hosting
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [probe, backup, monitor, hosting-preview, hosting-cutover]
+        default: probe
+        required: true
+      approved_sha:
+        description: Full current main SHA; required for hosting deployment/cutover
+        type: string
+        default: ''
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: adriatic-operations-${{ github.event_name == 'schedule' && github.event.schedule || inputs.operation }}
+  cancel-in-progress: false
+jobs:
+  operations:
+    if: github.event_name == 'schedule' || !startsWith(inputs.operation, 'hosting-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select operation
+        env:
+          REQUESTED: ${{ inputs.operation }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+            if [[ "$SCHEDULE" == '23 2 * * *' ]]; then echo 'TASK=backup' >> "$GITHUB_ENV"; else echo 'TASK=monitor' >> "$GITHUB_ENV"; fi
+          else
+            case "$REQUESTED" in probe|backup|monitor|hosting-preview|hosting-cutover) echo "TASK=$REQUESTED" >> "$GITHUB_ENV";; *) exit 1;; esac
+          fi
+      - name: Read-only capability probe
+        if: env.TASK == 'probe'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python3 ops/probe.py
+      - name: Verify monitoring runs from main
+        if: env.TASK == 'monitor' || env.TASK == 'backup'
+        run: test "$GITHUB_REF" = refs/heads/main
+      - name: Production monitoring
+        id: monitor
+        if: env.TASK == 'monitor'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 ops/monitor.py
+      - name: Collect and validate full backup
+        id: collect
+        if: env.TASK == 'backup'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/at-backup"
+          python3 ops/backup.py collect "$RUNNER_TEMP/at-backup/plain" > "$RUNNER_TEMP/at-backup/report.json"
+          mkdir -p .ops-private
+          node ops/seal.mjs seal "$RUNNER_TEMP/at-backup/backup.tar.gz" .ops-private/adriatic-trade.atbak ops/backup-public.pem
+          (cd .ops-private && sha256sum adriatic-trade.atbak > adriatic-trade.atbak.sha256)
+          python3 -c 'import json,os,pathlib; d=json.loads((pathlib.Path(os.environ["RUNNER_TEMP"])/"at-backup/report.json").read_text()); d.pop("archive",None); print(json.dumps(d))'
+      - name: Save encrypted offsite backup
+        id: backup
+        if: env.TASK == 'backup'
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .ops-private/adriatic-trade.atbak
+            .ops-private/adriatic-trade.atbak.sha256
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - name: Alert on failure or record recovery
+        if: always() && (env.TASK == 'backup' || env.TASK == 'monitor')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KIND: ${{ env.TASK }}
+          ALERT_STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: node ops/alert.mjs
+      - name: Remove temporary plaintext and encrypted work files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/at-backup" .ops-private
+  hosting:
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.operation, 'hosting-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: worker-production
+    concurrency:
+      group: adriatic-production-hosting
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TASK: ${{ inputs.operation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check immutable hosting approval
+        if: startsWith(env.TASK, 'hosting-')
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: bash scripts/check-worker-release.sh
+      - name: Build public assets
+        if: startsWith(env.TASK, 'hosting-')
+        run: node scripts/build-web.mjs
+      - name: Deploy hosting preview without domain changes
+        if: startsWith(env.TASK, 'hosting-')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 deploy --config wrangler.web.json
+          PREVIEW=$(python3 ops/hosting.py preview-url)
+          echo "Hosting preview: $PREVIEW"
+          curl --fail --silent --show-error "$PREVIEW/hosting-status.json" | jq -e --arg sha "$GITHUB_SHA" '.service=="adriatic-trade-web" and .revision==$sha'
+          curl --fail --silent --show-error "$PREVIEW/" | grep -q 'Adriatic'
+          curl --fail --silent --show-error "$PREVIEW/admin.html" | grep -q 'data-admin-login-form'
+      - name: Recheck approved revision immediately before cutover
+        if: env.TASK == 'hosting-cutover'
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: bash scripts/check-worker-release.sh
+      - name: Confirm pause and switch website domains
+        id: cutover
+        if: env.TASK == 'hosting-cutover'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          PYTHONPATH=ops python3 -c 'from cloudflare import Cloudflare; c=Cloudflare(); assert c.query(c.database(),"SELECT mode FROM checkout_intake WHERE id=1")==[{"mode":"paused"}]'
+          python3 ops/hosting.py cutover
+          READY=false
+          for ATTEMPT in $(seq 1 24); do
+            if curl --fail --silent https://adriatictrade.rs/hosting-status.json | jq -e --arg sha "$GITHUB_SHA" '.revision==$sha' && curl --fail --silent https://www.adriatictrade.rs/hosting-status.json | jq -e --arg sha "$GITHUB_SHA" '.revision==$sha'; then READY=true; break; fi
+            sleep 5
+          done
+          if [[ "$READY" != true ]]; then python3 ops/hosting.py rollback; exit 1; fi
+      - name: Save DNS recovery metadata
+        if: always() && env.TASK == 'hosting-cutover'
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-dns-recovery-${{ github.run_id }}
+          path: web-dns-before.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Alert on hosting failure or record recovery
+        if: always() && inputs.operation == 'hosting-cutover'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KIND: hosting
+          ALERT_STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: node ops/alert.mjs
