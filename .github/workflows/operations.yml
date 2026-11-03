@@ -75,7 +75,7 @@ jobs:
           python3 ops/backup.py collect "$RUNNER_TEMP/at-backup/plain" > "$RUNNER_TEMP/at-backup/report.json"
           mkdir -p .ops-private
           node ops/seal.mjs seal "$RUNNER_TEMP/at-backup/backup.tar.gz" .ops-private/adriatic-trade.atbak ops/backup-public.pem
-          sha256sum .ops-private/adriatic-trade.atbak > .ops-private/adriatic-trade.atbak.sha256
+          (cd .ops-private && sha256sum adriatic-trade.atbak > adriatic-trade.atbak.sha256)
           python3 -c 'import json,os,pathlib; d=json.loads((pathlib.Path(os.environ["RUNNER_TEMP"])/"at-backup/report.json").read_text()); d.pop("archive",None); print(json.dumps(d))'
       - name: Save encrypted offsite backup
         id: backup

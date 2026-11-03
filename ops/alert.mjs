@@ -9,8 +9,13 @@ const request=async(path,method='GET',body)=>{
   if(!r.ok)throw Error('GitHub alert operation failed: '+r.status);return r.status===204?null:r.json();
 };
 const title='[Operations] Adriatic Trade: '+kind+' failure';
-const items=await request('/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100');
-const issue=items.find(i=>i.title===title&&!i.pull_request);
+let issue;
+for(let page=1;page<=20;page++){
+ const items=await request('/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100&page='+page);
+ issue=items.find(i=>i.title===title&&!i.pull_request);
+ if(issue||items.length<100)break;
+ if(page===20)throw Error('Alert lookup pagination limit');
+}
 const run='https://github.com/'+repo+'/actions/runs/'+process.env.GITHUB_RUN_ID;
 if(state==='failure'&&!issue){
  await request('/issues','POST',{title,assignees:['goranlazarevic-rs'],body:'Automatska provera nije uspela.\n\nVrsta: '+kind+'\nIzvršavanje: '+run+'\n\nProveriti korak koji nije prošao. Monitoring ne pravi porudžbine; namerna pauza prodaje nije kvar. Backup se smatra uspešnim tek nakon šifrovanja i uspešnog čuvanja artefakta. Ne objavljivati lične podatke ili tajne u ovom issue-u.'});

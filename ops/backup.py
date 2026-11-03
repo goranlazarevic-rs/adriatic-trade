@@ -82,6 +82,8 @@ def collect(destination):
     with tarfile.open(archive,'w:gz') as tar:
         for path in sorted(root.rglob('*')):
             if path.is_file():tar.add(path,arcname=str(path.relative_to(root)),recursive=False)
+    restored=restore(archive,root.parent/"verification-restore")
+    if restored!=report:raise RuntimeError("Archive restore report mismatch")
     return archive,report
 def restore(archive,destination):
     root=pathlib.Path(destination)
