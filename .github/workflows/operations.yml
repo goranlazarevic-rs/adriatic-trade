@@ -1,13 +1,15 @@
 name: Adriatic Trade backups, monitoring and hosting
+run-name: "Adriatic operations · ${{ github.event_name == 'schedule' && (github.event.schedule == '23 2 * * *' && 'backup' || 'monitor') || inputs.operation }}"
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    # Offset from the start of the hour to reduce scheduler congestion.
+    - cron: '2-59/5 * * * *'
     - cron: '23 2 * * *'
   workflow_dispatch:
     inputs:
       operation:
         type: choice
-        options: [probe, backup, monitor, hosting-preview, hosting-cutover]
+        options: [probe, backup, monitor, alert-test, hosting-preview, hosting-cutover]
         default: probe
         required: true
       approved_sha:
@@ -44,8 +46,17 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
             if [[ "$SCHEDULE" == '23 2 * * *' ]]; then echo 'TASK=backup' >> "$GITHUB_ENV"; else echo 'TASK=monitor' >> "$GITHUB_ENV"; fi
           else
-            case "$REQUESTED" in probe|backup|monitor|hosting-preview|hosting-cutover) echo "TASK=$REQUESTED" >> "$GITHUB_ENV";; *) exit 1;; esac
+            case "$REQUESTED" in probe|backup|monitor|alert-test|hosting-preview|hosting-cutover) echo "TASK=$REQUESTED" >> "$GITHUB_ENV";; *) exit 1;; esac
           fi
+      - name: Test the real alert and recovery channel
+        if: env.TASK == 'alert-test'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KIND: test
+        run: |
+          ALERT_STATE=failure node ops/alert.mjs
+          ALERT_STATE=failure node ops/alert.mjs
+          ALERT_STATE=success node ops/alert.mjs
       - name: Read-only capability probe
         if: env.TASK == 'probe'
         env:
@@ -96,6 +107,14 @@ jobs:
           ALERT_KIND: ${{ env.TASK }}
           ALERT_STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
         run: node ops/alert.mjs
+      - name: Record operation result
+        if: always()
+        env:
+          OPERATION_RESULT: ${{ job.status }}
+        run: |
+          echo "Operacija: $TASK" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rezultat: $OPERATION_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          echo "Provera ne otvara prodaju i ne izdaje račune." >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary plaintext and encrypted work files
         if: always()
         run: rm -rf "$RUNNER_TEMP/at-backup" .ops-private

@@ -4,6 +4,14 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),{parse}=require(process.env.YAML_MODULE_PATH||'yaml');
 const workflow=parse(fs.readFileSync('.github/workflows/operations.yml','utf8'));
 assert.deepEqual(Object.keys(workflow.on).sort(),['schedule','workflow_dispatch']);
+assert.deepEqual(workflow.on.schedule.map(x=>x.cron),['2-59/5 * * * *','23 2 * * *']);
+const testAlert=workflow.jobs.operations.steps.find(s=>s.name==='Test the real alert and recovery channel');
+assert.equal(testAlert.env.ALERT_KIND,'test');
+assert.equal((testAlert.run.match(/ALERT_STATE=failure/g)||[]).length,2);
+assert.ok(testAlert.run.includes('ALERT_STATE=success'));
+assert.ok(!testAlert.run.includes('cloudflare'));
+assert.ok(!testAlert.run.includes('backup.py'));
+
 assert.equal(workflow.jobs.hosting.environment.name,'worker-production');
 assert.equal(workflow.jobs.hosting.concurrency['cancel-in-progress'],false);
 const hosting=workflow.jobs.hosting.steps;

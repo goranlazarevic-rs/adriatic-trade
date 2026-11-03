@@ -39,3 +39,14 @@ Proverava i da postoji neistekla šifrovana kopija mlađa od 36 sati. Greška na
 Javni sadržaj se gradi u `.web-dist` i objavljuje kao Workers Static Assets `adriatic-trade-web`; API Worker, D1 i R2 ostaju isti. SQL, izvorni operativni kod i ključevi nisu deo javnih datoteka. Operacije `hosting-preview` i `hosting-cutover` zahtevaju tačan aktuelni `main` SHA i postojeće odobrenje okruženja `worker-production`.
 
 Pre promene domena čuva se `website-dns-recovery-RUN` sa dotadašnjim zapisima samo za dva veb imena. MX/TXT i ostali zapisi se proveravaju sažetkom. Neuspešna provera novog hostinga pokušava vraćanje starih veb DNS zapisa. DNS oporavak nije oporavak baze. Posle potvrđenog prelaska isključiti GitHub Pages objavljivanje, zadržati repozitorijum i istoriju koda.
+
+
+## Potvrda odluke vlasnika i trenutni prelazak
+
+Vlasnik je 3.11.2026. odabrao Cloudflare kao cilj za javni sajt/panel i DNS, uz domen registrovan kod mCloud-a, Outlook na Microsoft 365 i početno zatvoren prijem. Saglasan je sa predlogom Workers Paid (osnovica 5 USD mesečno, uz potrošnju) i alarmom na 1 USD dodatne obračunske potrošnje. Promena nameservera zamenjuje raniju odluku da se zadrži mCloud DNS; još nije izvršena. Nadogradnja paketa i budžetski alarm nisu potvrđeni kao aktivirani.
+
+Pre bilo kakve promene nameservera: izvesti **celu izvornu mCloud DNS zonu**, sačuvati prethodne NS/DNSSEC/DS podatke i stare web zapise, uporediti uvezene zapise (uključujući MX, SPF, DKIM, DMARC, autodiscover, SRV, verifikacije i Resend poddomene). Javno očitavanje poznatih DNS imena nije potpuna kopija zone. Potrebna je kontrola u izvornom panelu. Ne oslanjati se samo na Cloudflare quick scan. Cloudflare zona se prvo priprema, a nameserveri se menjaju tek nakon ove provere. Status DNSSEC mora biti proverljiv da promena NS ne napravi nevalidan lanac potpisa. Posle aktivacije proveriti javni DNS, TLS, sajt/panel, slanje i prijem mejla, zaštitu API-ja i zatvoren prijem.
+
+Operacija `alert-test` pravi jasno označen probni GitHub issue, ponavlja isti signal da proveri da nema duplikata, a zatim beleži oporavak i zatvara probni issue. Ne prijavljuje lažni kvar produkcije, ne menja porudžbine i ne dodiruje Minimax. Prijem poruke u stvarno poštansko sanduče vlasnik proverava zasebno; uključeno mejl obaveštavanje samo po sebi nije dokaz dostave.
+
+GitHub monitor raspored je osvežen na minute 2, 7, 12…57 radi izbegavanja početka sata. Automatsko izvršavanje mora se dokazati događajem `schedule` i uspešnim rezultatom; uspešan `workflow_dispatch` dokazuje samo ručno pokretanje. Ako GitHub raspored i dalje ne radi, to ostaje otvoren blokator za oslanjanje na automatski nadzor. Budžetski alarm je informativan, može kasniti i ne zaustavlja naplatu; osnovna pretplata nije dodatna obračunska potrošnja.
