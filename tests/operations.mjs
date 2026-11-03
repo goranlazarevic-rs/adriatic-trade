@@ -41,16 +41,30 @@ test('Public asset build excludes infrastructure, SQL and recovery keys',()=>{
  assert.ok(!walk('.web-dist').some(p=>/\.(pem|sql|sqlite|atbak|p12|pfx)$/.test(p)));
 });
 
-test('Alerts create one owner notification, deduplicate and close after recovery',()=>{
- const source=fs.readFileSync('ops/alert.mjs','utf8');
- for(const scenario of ['new','repeat','recovery','healthy']){
-  const script=`process.env.GITHUB_REPOSITORY='goranlazarevic-rs/adriatic-trade';process.env.GITHUB_TOKEN='synthetic';process.env.GITHUB_RUN_ID='123';process.env.ALERT_KIND='monitor';process.env.ALERT_STATE=${JSON.stringify(['new','repeat'].includes(scenario)?'failure':'success')};
-  const calls=[];globalThis.fetch=async(url,opt)=>{calls.push([url,opt.method,opt.body?JSON.parse(opt.body):null]);return new Response(JSON.stringify(opt.method==='GET'?${JSON.stringify(['repeat','recovery'].includes(scenario)?[{number:42,title:'[Operations] Adriatic Trade: monitor failure'}]:[])}:{}),{status:200});};
-  await import('data:text/javascript;base64,${Buffer.from(source).toString('base64')}');console.log(JSON.stringify(calls));`;
+test('Alerts survive delayed issue listing and close after recovery',()=>{
+ const source=fs.readFileSync('ops/alert.mjs','utf8'),remote=path.join(root,'mock-remote.json'),cache=path.join(root,'alert-state.json');
+ fs.writeFileSync(remote,JSON.stringify({issues:[],comments:0}));
+ for(const state of ['failure','failure','success']){
+  const script=`import fs from 'node:fs';process.env.GITHUB_REPOSITORY='goranlazarevic-rs/adriatic-trade';process.env.GITHUB_TOKEN='synthetic';process.env.GITHUB_RUN_ID='123';process.env.ALERT_KIND='test';process.env.ALERT_STATE=${JSON.stringify(state)};process.env.ALERT_STATE_FILE=${JSON.stringify(cache)};
+  const file=${JSON.stringify(remote)},db=JSON.parse(fs.readFileSync(file,'utf8'));
+  globalThis.fetch=async(url,opt)=>{
+   const endpoint=new URL(url).pathname.split('/adriatic-trade')[1],body=opt.body?JSON.parse(opt.body):null;let result;
+   if(opt.method==='GET'&&endpoint==='/issues')result=[]; // GitHub list index is deliberately stale.
+   else if(opt.method==='POST'&&endpoint==='/issues'){result={...body,number:db.issues.length+1,state:'open',user:{login:'github-actions[bot]'}};db.issues.push(result);}
+   else if(endpoint.endsWith('/comments')){db.comments++;result={};}
+   else {const issue=db.issues.find(i=>i.number===Number(endpoint.split('/').at(-1)));if(opt.method==='PATCH')Object.assign(issue,body);result=issue;}
+   fs.writeFileSync(file,JSON.stringify(db));return new Response(JSON.stringify(result),{status:200});
+  };
+  await import('data:text/javascript;base64,${Buffer.from(source).toString('base64')}');`;
   const run=spawnSync(process.execPath,['--input-type=module'],{input:script,encoding:'utf8'});assert.equal(run.status,0,run.stderr);
-  const calls=JSON.parse(run.stdout.trim().split('\n').at(-1));
-  const writes=calls.filter(x=>x[1]!=='GET');assert.equal(writes.length,scenario==='new'?1:scenario==='recovery'?2:0);
-  if(scenario==='new'){assert.deepEqual(writes[0][2].assignees,['goranlazarevic-rs']);assert.ok(!writes[0][2].body.includes('synthetic'));}
-  if(scenario==='recovery')assert.equal(writes[1][2].state,'closed');
  }
+ const db=JSON.parse(fs.readFileSync(remote,'utf8'));assert.equal(db.issues.length,1);assert.equal(db.issues[0].state,'closed');assert.equal(db.comments,1);assert.deepEqual(db.issues[0].assignees,['goranlazarevic-rs']);assert.ok(db.issues[0].body.startsWith('PROBA ALARMA'));assert.equal(fs.existsSync(cache),false);
+});
+test('Recovery closes all matching bot alerts and preserves human issues',()=>{
+ const source=fs.readFileSync('ops/alert.mjs','utf8'),cache=path.join(root,'recovery-state.json');
+ const script=`process.env.GITHUB_REPOSITORY='goranlazarevic-rs/adriatic-trade';process.env.GITHUB_TOKEN='synthetic';process.env.GITHUB_RUN_ID='124';process.env.ALERT_KIND='monitor';process.env.ALERT_STATE='success';process.env.ALERT_STATE_FILE=${JSON.stringify(cache)};
+ const issues=[1,2,3].map(number=>({number,title:'[Operations] Adriatic Trade: monitor failure',state:'open',user:{login:number===3?'human':'github-actions[bot]'}}));const writes=[];
+ globalThis.fetch=async(url,opt)=>{if(opt.method==='GET')return new Response(JSON.stringify(issues));writes.push(url);return new Response(JSON.stringify({state:'closed'}));};
+ await import('data:text/javascript;base64,${Buffer.from(source).toString('base64')}');console.log(JSON.stringify(writes));`;
+ const run=spawnSync(process.execPath,['--input-type=module'],{input:script,encoding:'utf8'});assert.equal(run.status,0,run.stderr);const writes=JSON.parse(run.stdout.trim().split('\n').at(-1));assert.equal(writes.length,4);assert.ok(!writes.some(x=>x.includes('/issues/3')));
 });
