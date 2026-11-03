@@ -2721,17 +2721,36 @@ function fiscalGuard() {
     AND NOT EXISTS(SELECT 1 FROM fiscal_documents r WHERE r.order_id=orders.id AND r.kind='refund')
     AND COALESCE((SELECT json_extract(data_json,'$.paymentStatus') FROM order_operations WHERE order_id=orders.id),'unpaid')<>'refunded'`;
 }
+function firstSaleInvoiceRows(order) {
+  mmReservationUnits(order.items);const rows=[];
+  const add=(sku,qty,price)=>{mmDemand(Object.hasOwn(MM_ITEMS,sku)&&Number.isSafeInteger(qty)&&qty>0&&qty<=10000,'INVALID_FISCAL_PREPARATION');rows.push({sku,name:MM_ITEMS[sku][2],qty,price:price/100,value:price*qty/100});};
+  let goods=0;
+  for(const item of order.items){
+    const unit=mmCents(item.unitPrice);mmDemand(unit>0&&unit<=2000000&&mmCents(item.lineTotal)===unit*item.qty,'INVALID_FISCAL_PREPARATION');goods+=unit*item.qty;
+    if(Object.hasOwn(BUNDLE_COMPONENTS,item.sku)){
+      for(const c of mmAllocate(unit,item.bundleComponents)){
+        const price=Math.floor(c.amount/c.units),extra=c.amount%c.units;
+        if(c.units>extra)add(c.sku,(c.units-extra)*item.qty,price);
+        if(extra)add(c.sku,extra*item.qty,price+1);
+      }
+    }else add(item.sku,item.qty,unit);
+  }
+  const shipping=mmCents(order.shipping);mmDemand(goods===mmCents(order.goodsTotal)&&[0,42000].includes(shipping)&&goods+shipping===mmCents(order.total),'INVALID_FISCAL_PREPARATION');
+  if(shipping)add('DOSTAVA',1,shipping);
+  mmDemand(rows.reduce((sum,r)=>sum+mmCents(r.value),0)===mmCents(order.total),'INVALID_FISCAL_PREPARATION');return rows;
+}
 async function fiscalView(db,order) {
   await ensureFiscalSchema(db);
   const rows=await db.prepare(`SELECT f.*,n.status email_status FROM fiscal_documents f
     LEFT JOIN notification_outbox n ON n.operation_key=f.notification_key WHERE f.order_id=? ORDER BY f.kind`).bind(order.id).all();
-  const view={required:true,sale:null,refund:null,ready:false};
+  const view={required:true,sale:null,refund:null,ready:false,invoiceRows:[],preparationError:null};
+  try{view.invoiceRows=firstSaleInvoiceRows(order);}catch{view.preparationError='Sačuvane stavke, sastav paketa ili iznosi nisu usklađeni. Potrebna je provera porudžbine.';}
   for(const f of rows.results||[]) view[f.kind]={pfrNumber:f.pfr_number,issuedAt:f.issued_at,amount:f.gross_cents/100,
     deliveryMode:f.delivery_mode,deliveryStatus:f.delivery_mode==='minimax'?'manually_recorded':f.email_status==='sent'?'accepted':f.email_status||'missing',
     deliveredAt:f.delivered_at,recipient:f.recipient,pdfFilename:f.pdf_filename||null,
     evidence:'operator_attestation',originalPfr:f.original_key};
   const ready=await db.prepare(`SELECT id FROM orders WHERE id=? AND ${fiscalGuard()}`).bind(order.id).first();
-  view.ready=Boolean(ready);return view;
+  view.ready=Boolean(ready)&&!view.preparationError;return view;
 }
 async function fiscalReadyError(env,order) {
   if(!firstSaleEnabled(env))return null;
@@ -2751,6 +2770,7 @@ async function fiscalForm(request) {
 async function handleFiscal(request,env,order,origin) {
   const fail=(error,status=400,code='INVALID_FISCAL_EVIDENCE')=>json({ok:false,error,code},status,origin);
   if(!firstSaleEnabled(env))return fail('Fiskalna evidencija nije uključena.',404);
+  if(order.fiscalControl?.preparationError)return fail(order.fiscalControl.preparationError,409);
   if(request.method!=='POST')return fail('Dozvoljen je samo upis fiskalne evidencije.',405);
   let form;try{form=await fiscalForm(request);}catch(e){return fail('Očekivan je fiskalni obrazac sa PDF-om do 5 MB.',e.message==='FISCAL_FORM_TOO_LARGE'?413:400);}
   const allowed=['operationId','revision','kind','pfrNumber','originalPfr','issuedAt','amount','deliveryMode','deliveredAt','recipient','reason','confirmed','receipt'];

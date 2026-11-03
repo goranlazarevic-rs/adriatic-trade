@@ -242,10 +242,11 @@
 
   function fiscalPanel(o){
     const f=o.fiscalControl;if(!f?.required)return '';
+    const preciseMoney=v=>new Intl.NumberFormat('sr-RS',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v)+' RSD';
     const labels={accepted:'Email servis je prihvatio PDF',manually_recorded:'Slanje iz Minimax-a je ručno evidentirano',pending:'Email čeka slanje',sending:'Slanje je u toku',attention:'Potrebna je provera email servisa',missing:'Nedostaje potvrda slanja'};
     const summary=(doc,title)=>doc?`<h4>${title}</h4><div class="admin-info">${row('PFR broj',doc.pfrNumber)}${row('Iznos',money(doc.amount))}${row('Slanje',labels[doc.deliveryStatus]||'Nepotvrđeno')}${row('Primalac',doc.recipient)}</div><p>Podatke je ručno potvrdio administrator. Prihvatanje email servisa nije potvrda prijema u inbox.</p>`:'';
     const kind=f.sale?'refund':'sale',canRecord=(o.status==='confirmed'||(o.status==='shipped'&&f.sale))&&!f.refund;
-    const form=canRecord?`<form class="admin-ship-form" data-fiscal-form data-kind="${kind}">
+    const form=canRecord&&!f.preparationError?`<form class="admin-ship-form" data-fiscal-form data-kind="${kind}">
       <div class="field wide"><label>PFR broj ${kind==='refund'?'pune refundacije':'prodaje'} *</label><input name="pfrNumber" maxlength="40" placeholder="Broj sa izdatog fiskalnog računa" required></div>
       <div class="field"><label>Vreme izdavanja računa *</label><input name="issuedAt" type="datetime-local" step="1" required></div>
       <div class="field"><label>Ukupan iznos računa (RSD) *</label><input name="amount" type="number" step="0.01" min="0.01" value="${esc(o.total.toFixed(2))}" required></div>
@@ -257,6 +258,7 @@
       <label class="checkbox wide"><input name="confirmed" type="checkbox" value="yes" required><span>Proverio/la sam originalni fiskalni dokument, PFR broj, iznos, artikle, vrstu dokumenta, način plaćanja i email konkretnog kupca. Ako je izabran Minimax, proverio/la sam da je račun već poslat toj osobi.</span></label>
       <div class="wide"><button class="btn btn-primary" type="submit">Sačuvaj i pošalji fiskalni PDF</button></div></form>`:'';
     return `<section class="admin-box" data-fiscal-panel><h3>Fiskalni račun</h3><p>Ovde povezujete već izdat račun iz Minimax-a. Panel ne izdaje račun niti automatski proverava njegovu autentičnost.</p>${summary(f.sale,'Prodaja')}${summary(f.refund,'Puna refundacija')}
+      ${f.preparationError?`<p class="notice">${esc(f.preparationError)}</p>`:`<div class="admin-stock-table-wrap" role="region" aria-label="Priprema stavki za Minimax" tabindex="0"><table class="admin-stock-table" data-fiscal-invoice-rows><caption>Priprema za unos u Minimax · sačuvane cene sa PDV-om</caption><thead><tr><th scope="col">Šifra</th><th scope="col">Artikal</th><th scope="col" class="stock-number">Kol.</th><th scope="col" class="stock-number">Cena sa PDV</th><th scope="col" class="stock-number">Iznos</th></tr></thead><tbody>${f.invoiceRows.map(r=>`<tr><th scope="row">${esc(r.sku)}</th><td>${esc(r.name)}</td><td class="stock-number">${esc(r.qty)}</td><td class="stock-number">${esc(preciseMoney(r.price))}</td><td class="stock-number">${esc(preciseMoney(r.value))}</td></tr>`).join('')}</tbody></table></div><p>Ovo je priprema stavki, a ne izdat račun. Poreska podešavanja i način plaćanja proverite u Minimax-u.</p>`}
       <p><strong>${f.ready?'Račun je evidentiran i slanje je potvrđeno za nastavak isporuke.':f.refund?'Evidentirana je refundacija; slanje robe je zaustavljeno.':'Pre predaje robe povežite račun i proverite slanje kupcu.'}</strong></p>
       ${f.sale?form?`<details><summary>Evidentiraj punu refundaciju iz Minimax-a</summary><p>Prvo uradite punu refundaciju u Minimax-u. Ovim se beleži dokument i veza sa originalom; naplata i povrat robe vode se posebno.</p>${form}</details>`:'':form}</section>`;
   }

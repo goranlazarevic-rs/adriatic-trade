@@ -136,3 +136,16 @@ test('fiscal-linked local payment and generic fiscal fields cannot be overwritte
   assert.equal((await h.call(h.id,'local-payment',{method:'bank_transfer'})).status,409);
   assert.equal((await h.operations(h.id,{fiscalNumber:'7AF4D923-E3B30A31-999'})).status,409);assert.deepEqual(await h.get(h.id),before);
 });
+for(const scenario of ['STANDARD','PAKET','BESPLATNA','GURMAN'])test('read-only invoice preparation keeps saved package components, shipping and exact cents: '+scenario,async()=>{
+  const h=harness(),order=h.ctx.mmProbeOrder(scenario),rows=h.ctx.firstSaleInvoiceRows(order);
+  assert.equal(rows.reduce((sum,r)=>sum+Math.round(r.value*100),0),Math.round(order.total*100));
+  assert.equal(rows.some(r=>r.sku==='DOSTAVA'),scenario!=='BESPLATNA');assert.ok(rows.every(r=>!r.sku.startsWith('PKT-')));assert.equal(h.state.emails.length,0);
+});
+test('invoice preparation uses saved v2 recipe and accepted price rather than the current bundle',()=>{
+  const h=harness(),order={items:[{sku:'PKT-PROBA',qty:2,unitPrice:1150,lineTotal:2300,packageVersion:'v2',bundleComponents:[{sku:'10012',units:2,referenceUnitPrice:800}]}],goodsTotal:2300,shipping:420,total:2720};
+  const rows=h.ctx.firstSaleInvoiceRows(order);assert.equal(rows[0].sku,'10012');assert.equal(rows[0].qty,4);assert.equal(rows[0].price,575);assert.equal(rows.length,2);
+});
+test('preparation does not reprice a saved promotional individual item',()=>{
+  const h=harness(),rows=h.ctx.firstSaleInvoiceRows({items:[{sku:'10240',qty:1,unitPrice:499,lineTotal:499}],goodsTotal:499,shipping:420,total:919});
+  assert.equal(rows[0].price,499);assert.equal(rows[0].value,499);
+});
