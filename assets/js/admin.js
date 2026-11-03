@@ -66,7 +66,15 @@
     alertBox.textContent=message;alertBox.classList.remove('hidden','success');if(type==='success')alertBox.classList.add('success');
     setTimeout(()=>alertBox.classList.add('hidden'),4500);
   }
-  function setBusy(el,busy){if(!el)return;el.classList.toggle('admin-busy',busy);el.querySelectorAll?.('button,input,select').forEach(x=>x.disabled=busy)}
+  const disabledBeforeBusy=new WeakMap();
+  function setBusy(el,busy){
+    if(!el)return;el.classList.toggle('admin-busy',busy);
+    el.querySelectorAll?.('button,input,select,textarea').forEach(x=>{
+      if(busy){if(!disabledBeforeBusy.has(x))disabledBeforeBusy.set(x,x.disabled);x.disabled=true;}
+      else if(disabledBeforeBusy.has(x)){x.disabled=disabledBeforeBusy.get(x);disabledBeforeBusy.delete(x);}
+      // Newly rendered nodes keep their current business-rule disabled state.
+    });
+  }
 
   function resetInquiries(){
     inquiryRequest++;inquiries=[];inquiryFilter.value='';inquiryRefresh.disabled=false;
