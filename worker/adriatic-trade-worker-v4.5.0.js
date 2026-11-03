@@ -118,7 +118,8 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.11.0",
+        version: "4.12.0",
+        firstSaleFiscal: firstSaleEnabled(env),
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -415,12 +416,12 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry|minimax-draft))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry|minimax-draft|fiscal))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
   const action = match[2] || "";
-  const order = await getOrderById(env.DB, orderId);
+  const order = await getOrderById(env.DB, orderId, env);
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
   if (action === 'minimax-draft') return mmHandleDraft(request, env, order, origin);
   if (request.method === 'POST' && await mmStagingEnabled(env)) {
@@ -428,6 +429,9 @@ async function handleAdmin(request, env, url, origin) {
     const active = await env.DB.prepare("SELECT status FROM minimax_drafts WHERE order_id=? AND status IN ('sending','attention','created')").bind(order.id).first();
     if (active) return json({ok:false,error:'Prvo proverite ishod prenosa Minimax nacrta. Porudžbina je privremeno zaključana.'},409,origin);
   }
+
+  if (action === "fiscal") return handleFiscal(request,env,order,origin);
+  if(firstSaleEnabled(env)&&order.fiscalControl?.sale&&request.method==='POST'&&action==='local-payment')return json({ok:false,error:'Način plaćanja je vezan za evidentirani fiskalni račun. Potrebna je provera pre izmene.'},409,origin);
 
   if (request.method === "POST" && action === "email-retry") {
     await env.DB.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, attempts=0 WHERE order_id=? AND status='attention' AND (first_attempt_at IS NULL OR first_attempt_at>?)")
@@ -453,7 +457,7 @@ async function handleAdmin(request, env, url, origin) {
         .bind(order.id, "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu, a IPS plaćanje je izabrano kao podrazumevano.", now)
     ]);
     if (!results[0].meta.changes) return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    return json({ ok: true, order: await getOrderById(env.DB, order.id, env) }, 200, origin);
   }
 
   if (request.method === "POST" && action === "local-payment") {
@@ -562,10 +566,13 @@ async function handleAdmin(request, env, url, origin) {
     if (!verification.ok) return json({ ok: false, error: verification.error }, 409, origin);
 
     let attachment = null;
+    const fiscalError=await fiscalReadyError(env,order);
+    if(fiscalError)return json({ok:false,error:fiscalError,code:"FISCAL_REQUIRED"},409,origin);
     let receiptUploaded = false;
     let receiptKey = order.receiptKey || "";
     let receiptFilename = order.receiptFilename || "";
     const receipt = form.get("receipt");
+    if(firstSaleEnabled(env)&&receipt?.size>0)return json({ok:false,error:"PDF se povezuje i šalje kroz odeljak Fiskalni račun."},409,origin);
     if (receipt && typeof receipt === "object" && typeof receipt.arrayBuffer === "function" && receipt.size > 0) {
       if (receipt.size > 5 * 1024 * 1024) return json({ ok: false, error: "PDF fiskalnog računa može imati najviše 5 MB." }, 413, origin);
       const filename = safePdfFilename(receipt.name || `fiskalni-racun-${order.id}.pdf`);
@@ -592,15 +599,15 @@ async function handleAdmin(request, env, url, origin) {
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
       subject: `Porudžbina ${order.id} je lično isporučena`,
-      html: localDeliveredEmailHtml(order, Boolean(attachment || receiptKey)),
+      html: localDeliveredEmailHtml(order, !firstSaleEnabled(env) && Boolean(attachment || receiptKey)),
       tags: [{ name: "category", value: "local_delivery_delivered" }, { name: "order_id", value: order.id }]
     };
-    if (attachment) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
+    if (attachment && !firstSaleEnabled(env)) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
 
     const now = new Date().toISOString();
     const next = { ...order.operations, ...verification.data, fulfillment: "delivered", paymentStatus: "paid", localDelivery: { ...order.operations.localDelivery, deliveredAt: now } };
     const results = await commitNotification(env, order.id, [
-      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed' AND payment=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)`).bind(now, now, receiptKey || null, receiptFilename || null, order.id, order.payment, order.operationsRevision),
+      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed' AND payment=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?) ${firstSaleEnabled(env)?'AND '+fiscalGuard():''}`).bind(now, now, receiptKey || null, receiptFilename || null, order.id, order.payment, order.operationsRevision),
       env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=? AND revision=? AND changes()=1").bind(JSON.stringify(next), order.id, order.operationsRevision),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_delivered', ?, ? WHERE changes()=1").bind(order.id, `Administrator (zajednički ključ) · Lična isporuka završena. Uplata na račun proverena: ${next.remittanceDate}; referenca: ${next.paymentReference}. Email je sačuvan za slanje.`, now)
     ], payload).catch(async error => {
@@ -619,6 +626,8 @@ async function handleAdmin(request, env, url, origin) {
       return json({ok:false,error:'Operativna evidencija odbijene ili otkazane porudžbine je zaključana.'},409,origin);
     }
     let body; try { body=await request.json(); } catch { return json({ok:false,error:'Neispravan zahtev.'},400,origin); }
+    if(firstSaleEnabled(env)&&["fiscalNumber","fiscalProvider","fiscalReference"].some(k=>body[k]!==undefined&&(body[k]||'')!==(order.operations[k]||'')))return json({ok:false,error:"Fiskalni dokument povežite kroz odeljak Fiskalni račun."},409,origin);
+    if(firstSaleEnabled(env)&&body.paymentStatus==="refunded"&&!order.fiscalControl?.refund)return json({ok:false,error:"Prvo evidentirajte punu fiskalnu refundaciju iz Minimax-a."},409,origin);
     const current=order.operations;
     if (!Number.isInteger(body.revision) || body.revision!==order.operationsRevision) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
     const next={...current};
@@ -660,7 +669,7 @@ async function handleAdmin(request, env, url, origin) {
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'operations', ?, ? WHERE changes()=1").bind(order.id,note,now)
     ]);
     if(!results[0].meta.changes) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
-    return json({ok:true,order:await getOrderById(env.DB,order.id)},200,origin);
+    return json({ok:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
   }
   if (request.method === "GET" && !action) {
     if (await mmStagingEnabled(env)) order.minimax = {enabled:true,ready:mmCredentialsReady(env)};
@@ -783,6 +792,7 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Samo potvrđena, a neposlata porudžbina može biti otkazana." }, 409, origin);
     }
 
+    if(firstSaleEnabled(env)&&order.fiscalControl?.sale&&!order.fiscalControl?.refund)return json({ok:false,error:"Izdat je fiskalni račun. Prvo u Minimax-u uradite i evidentirajte punu refundaciju."},409,origin);
     const decision = await readDecisionReason(request);
     if (!decision.ok) return json({ ok: false, error: decision.error }, 400, origin);
 
@@ -799,7 +809,7 @@ async function handleAdmin(request, env, url, origin) {
     };
     const now = new Date().toISOString();
     const results = await commitNotification(env, order.id, [
-      env.DB.prepare("UPDATE orders SET status=?, updated_at=? WHERE id=? AND status=? AND payment=? AND total=?")
+      env.DB.prepare(`UPDATE orders SET status=?, updated_at=? WHERE id=? AND status=? AND payment=? AND total=? ${firstSaleEnabled(env)?"AND (NOT EXISTS(SELECT 1 FROM fiscal_documents WHERE order_id=orders.id AND kind='sale') OR EXISTS(SELECT 1 FROM fiscal_documents WHERE order_id=orders.id AND kind='refund'))":""}`)
         .bind("cancelled", now, order.id, "confirmed", order.payment, order.total),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, ?, ?, ? WHERE changes()=1")
         .bind(order.id, "cancelled", decisionEventNote("Porudžbina je otkazana", decision.data), now)
@@ -841,10 +851,13 @@ async function handleAdmin(request, env, url, origin) {
     }
 
     let attachment = null;
+    const fiscalError=await fiscalReadyError(env,order);
+    if(fiscalError)return json({ok:false,error:fiscalError,code:"FISCAL_REQUIRED"},409,origin);
     let receiptUploaded = false;
     let receiptKey = order.receiptKey || "";
     let receiptFilename = order.receiptFilename || "";
 
+    if(firstSaleEnabled(env)&&receipt?.size>0)return json({ok:false,error:"PDF se povezuje i šalje kroz odeljak Fiskalni račun."},409,origin);
     if (receipt && typeof receipt === "object" && typeof receipt.arrayBuffer === "function" && receipt.size > 0) {
       if (receipt.size > 5 * 1024 * 1024) {
         return json({ ok: false, error: "PDF fiskalnog računa može imati najviše 5 MB." }, 413, origin);
@@ -882,7 +895,7 @@ async function handleAdmin(request, env, url, origin) {
       if (!saved) return json({ ok: false, error: "Povezani fiskalni račun nije pronađen." }, 409, origin);
       attachment = { filename: receiptFilename };
     }
-    const shippedHtml = statusShippedEmailHtml(order, { courier, trackingNumber, trackingUrl, hasReceipt: Boolean(attachment || receiptKey) });
+    const shippedHtml = statusShippedEmailHtml(order, { courier, trackingNumber, trackingUrl, hasReceipt: !firstSaleEnabled(env) && Boolean(attachment || receiptKey) });
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
@@ -894,11 +907,11 @@ async function handleAdmin(request, env, url, origin) {
         { name: "order_id", value: order.id }
       ]
     };
-    if (attachment) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
+    if (attachment && !firstSaleEnabled(env)) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
     const now = new Date().toISOString();
     const results = await commitNotification(env, order.id, [
       env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier=?, tracking_number=?, tracking_url=?, receipt_key=?, receipt_filename=?
-        WHERE id=? AND status='confirmed' AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved')`)
+        WHERE id=? AND status='confirmed' AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved') ${firstSaleEnabled(env)?'AND '+fiscalGuard():''}`)
         .bind(now, now, courier, trackingNumber, trackingUrl || null, receiptKey || null, receiptFilename || null, order.id),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'shipped', ?, ? WHERE changes()=1")
         .bind(order.id, `Porudžbina je poslata: ${courier}, broj pošiljke ${trackingNumber}. Email je sačuvan za slanje.`, now)
@@ -945,7 +958,7 @@ async function notificationResponse(env, orderId, origin, alreadyDone = false) {
   // to repeat the state change or delete a persisted receipt after a send failure.
   try { await flushNotificationOutbox(env, orderId, true); }
   catch (error) { console.error('Saved notification retry failed', error.message); }
-  const order = await getOrderById(env.DB, orderId);
+  const order = await getOrderById(env.DB, orderId, env);
   const emailPending = order.notifications.length > 0;
   return json({ ok: true, order, alreadyDone, emailPending,
     ...(emailPending ? { warning: 'Izmena je sačuvana. Email čeka slanje; proverite obaveštenja porudžbine.' } : {})
@@ -1234,7 +1247,7 @@ async function getOrderBySubmissionId(db, submissionId) {
   return row ? rowToOrder(row) : null;
 }
 
-async function getOrderById(db, id) {
+async function getOrderById(db, id, env=null) {
   const row = await db.prepare("SELECT * FROM orders WHERE id = ? LIMIT 1").bind(id).first();
   if (!row) return null;
   await db.prepare("INSERT OR IGNORE INTO order_operations(order_id) VALUES (?)").bind(id).run();
@@ -1248,6 +1261,7 @@ async function getOrderById(db, id) {
   const notifications = await db.prepare("SELECT id, status, attempts, last_error FROM notification_outbox WHERE order_id=? AND status!='sent' ORDER BY id").bind(id).all();
   order.notifications = notifications.results || [];
   if (isApprovedLocalDelivery(order)) order.bankTransfer = bankTransferDetails(order);
+  if (firstSaleEnabled(env)) order.fiscalControl = await fiscalView(db,order);
   return order;
 }
 
@@ -2668,5 +2682,142 @@ async function mmHandleProbeOrder(request,env,url,origin) {
     env.DB.prepare("UPDATE orders SET status='confirmed',confirmed_at=?,updated_at=? WHERE id=? AND status='new'").bind(now,now,order.id),
     env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?,'probe_confirmed','Potvrđena sintetička porudžbina; bez slanja poruka.',? WHERE changes()=1").bind(order.id,now)
   ]);
-  return json({ok:true,order:await getOrderById(env.DB,order.id)},200,origin);
+  return json({ok:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
+}
+
+// Manual first-sale evidence in the standalone Worker,
+// not an ESIR adapter: no invoice issuance or authenticity verification here.
+function firstSaleEnabled(env) { return env?.FIRST_SALE_MODE === 'manual-minimax'; }
+async function ensureFiscalSchema(db) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS fiscal_cas_assert(ok INTEGER CHECK(ok=1))').run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS fiscal_documents (
+    pfr_key TEXT PRIMARY KEY, pfr_number TEXT NOT NULL, order_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('sale','refund')), original_key TEXT,
+    operation_id TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
+    issued_at TEXT NOT NULL, gross_cents INTEGER NOT NULL,
+    delivery_mode TEXT NOT NULL CHECK(delivery_mode IN ('panel','minimax')),
+    delivered_at TEXT, recipient TEXT NOT NULL, notification_key TEXT,
+    pdf_key TEXT, pdf_filename TEXT, pdf_hash TEXT, reason TEXT NOT NULL,
+    source_items TEXT NOT NULL, source_email TEXT NOT NULL, source_payment TEXT NOT NULL,
+    source_goods REAL NOT NULL, source_shipping REAL NOT NULL, source_total REAL NOT NULL,
+    created_at TEXT NOT NULL, UNIQUE(order_id,kind)
+  )`).run();
+}
+function fiscalPfr(value) {
+  if (typeof value !== 'string' || value.length > 160) return null;
+  const number=value.trim();
+  // PFR invoice number, not the commercial invoice's local sequence number.
+  return /^[A-Za-z0-9]{8}-[A-Za-z0-9]{8}-[1-9]\d{0,21}$/.test(number) ? number : null;
+}
+function fiscalDate(value) {
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value))return null;
+  const n=Date.parse(value);return Number.isFinite(n)&&new Date(n).toISOString()===value&&n<=Date.now()+300000?value:null;
+}
+function fiscalGuard() {
+  return `EXISTS(SELECT 1 FROM fiscal_documents f WHERE f.order_id=orders.id AND f.kind='sale'
+    AND f.source_items=orders.items_json AND f.source_email=orders.customer_email AND f.source_payment=orders.payment
+    AND f.source_goods=orders.goods_total AND f.source_shipping=orders.shipping AND f.source_total=orders.total
+    AND (f.delivery_mode='minimax' OR EXISTS(SELECT 1 FROM notification_outbox n WHERE n.operation_key=f.notification_key AND n.status='sent')))
+    AND NOT EXISTS(SELECT 1 FROM fiscal_documents r WHERE r.order_id=orders.id AND r.kind='refund')
+    AND COALESCE((SELECT json_extract(data_json,'$.paymentStatus') FROM order_operations WHERE order_id=orders.id),'unpaid')<>'refunded'`;
+}
+async function fiscalView(db,order) {
+  await ensureFiscalSchema(db);
+  const rows=await db.prepare(`SELECT f.*,n.status email_status FROM fiscal_documents f
+    LEFT JOIN notification_outbox n ON n.operation_key=f.notification_key WHERE f.order_id=? ORDER BY f.kind`).bind(order.id).all();
+  const view={required:true,sale:null,refund:null,ready:false};
+  for(const f of rows.results||[]) view[f.kind]={pfrNumber:f.pfr_number,issuedAt:f.issued_at,amount:f.gross_cents/100,
+    deliveryMode:f.delivery_mode,deliveryStatus:f.delivery_mode==='minimax'?'manually_recorded':f.email_status==='sent'?'accepted':f.email_status||'missing',
+    deliveredAt:f.delivered_at,recipient:f.recipient,pdfFilename:f.pdf_filename||null,
+    evidence:'operator_attestation',originalPfr:f.original_key};
+  const ready=await db.prepare(`SELECT id FROM orders WHERE id=? AND ${fiscalGuard()}`).bind(order.id).first();
+  view.ready=Boolean(ready);return view;
+}
+async function fiscalReadyError(env,order) {
+  if(!firstSaleEnabled(env))return null;
+  const state=await fiscalView(env.DB,order);
+  return state.ready?null:state.refund?'Evidentirana je refundacija. Pošiljka ne može biti poslata.':
+    'Prvo povežite izdat fiskalni račun i potvrdite slanje kupcu. Proverite iznos, podatke porudžbine i status emaila.';
+}
+async function fiscalForm(request) {
+  const type=request.headers.get('Content-Type')||'';
+  if(!type.startsWith('multipart/form-data;')||!request.body)throw Error('INVALID_FISCAL_FORM');
+  const reader=request.body.getReader(),parts=[];let size=0;
+  try {while(true){const p=await reader.read();if(p.done)break;size+=p.value.byteLength;if(size>5*1024*1024+65536)throw Error('FISCAL_FORM_TOO_LARGE');parts.push(p.value);}}
+  finally {await reader.cancel().catch(()=>{});}
+  const bytes=new Uint8Array(size);let offset=0;for(const p of parts){bytes.set(p,offset);offset+=p.byteLength;}
+  return new Response(bytes,{headers:{'Content-Type':type}}).formData();
+}
+async function handleFiscal(request,env,order,origin) {
+  const fail=(error,status=400,code='INVALID_FISCAL_EVIDENCE')=>json({ok:false,error,code},status,origin);
+  if(!firstSaleEnabled(env))return fail('Fiskalna evidencija nije uključena.',404);
+  if(request.method!=='POST')return fail('Dozvoljen je samo upis fiskalne evidencije.',405);
+  let form;try{form=await fiscalForm(request);}catch(e){return fail('Očekivan je fiskalni obrazac sa PDF-om do 5 MB.',e.message==='FISCAL_FORM_TOO_LARGE'?413:400);}
+  const allowed=['operationId','revision','kind','pfrNumber','originalPfr','issuedAt','amount','deliveryMode','deliveredAt','recipient','reason','confirmed','receipt'];
+  if([...form.keys()].some(k=>!allowed.includes(k)||form.getAll(k).length!==1))return fail('Nepoznata ili ponovljena polja obrasca.');
+  const operationId=form.get('operationId'),kind=form.get('kind'),pfr=fiscalPfr(form.get('pfrNumber')),
+    issuedAt=fiscalDate(form.get('issuedAt')),mode=form.get('deliveryMode'),recipient=form.get('recipient'),reason=form.get('reason');
+  const amount=form.get('amount');let cents;
+  try{if(typeof amount!=='string'||!/^\d{1,8}(?:\.\d{1,2})?$/.test(amount))throw Error();cents=mmCents(Number(amount));}catch{return fail('Unesite tačan ukupan iznos sa fiskalnog računa.');}
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(operationId||'')||
+    !['sale','refund'].includes(kind)||!pfr||!issuedAt||!['panel','minimax'].includes(mode)||form.get('confirmed')!=='yes'||
+    typeof reason!=='string'||reason.trim().length<5||reason.length>500||recipient!==order.customer.email||cents!==mmCents(order.total))
+    return fail('Proverite PFR broj, datum, ukupan iznos, email kupca i potvrdu provere originalnog računa.');
+  const deliveredAt=mode==='minimax'?fiscalDate(form.get('deliveredAt')):null;
+  if(mode==='minimax'&&(!deliveredAt||deliveredAt<issuedAt))return fail('Unesite stvarno vreme slanja računa iz Minimax-a, posle izdavanja.');
+  if(mode==='panel'&&!env.RESEND_API_KEY)return fail('Email servis nije spreman.',503);
+  const pfrKey=pfr.toUpperCase();
+  const originalNumber=kind==='refund'?fiscalPfr(form.get('originalPfr')):null;
+  const original=originalNumber?.toUpperCase()||null;
+  if(kind==='sale'&&form.get('originalPfr'))return fail('Prodajni račun ne koristi referencu refundacije.');
+  await ensureFiscalSchema(env.DB);
+  const sale=await env.DB.prepare("SELECT * FROM fiscal_documents WHERE order_id=? AND kind='sale'").bind(order.id).first();
+  if(kind==='refund'&&(!sale||original!==sale.pfr_key||pfrKey===original||issuedAt<sale.issued_at))return fail('Puna refundacija mora se pozvati na originalni PFR broj prodaje.');
+  const file=form.get('receipt');let buffer=null,pdfHash=null,filename=null;
+  if(file&&typeof file.arrayBuffer==='function'&&file.size>0){
+    if(file.size>5*1024*1024||!file.name.toLowerCase().endsWith('.pdf')||(file.type&&file.type!=='application/pdf'))return fail('Priložite originalni PDF do 5 MB.',413);
+    buffer=await file.arrayBuffer();const b=new Uint8Array(buffer);
+    if(!(b[0]===37&&b[1]===80&&b[2]===68&&b[3]===70))return fail('Dokument nije PDF.');
+    pdfHash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(n=>n.toString(16).padStart(2,'0')).join('');filename=safePdfFilename(file.name);
+  }
+  if(mode==='panel'&&!buffer)return fail('Za slanje iz panela potreban je originalni fiskalni PDF.');
+  const canonical=JSON.stringify({orderId:order.id,kind,pfr,original,issuedAt,cents,mode,deliveredAt,recipient,reason:reason.trim(),pdfHash});
+  const requestHash=await availabilityHash(canonical);
+  const old=await env.DB.prepare('SELECT * FROM fiscal_documents WHERE operation_id=?').bind(operationId).first();
+  if(old)return old.order_id===order.id&&old.request_hash===requestHash?notificationResponse(env,order.id,origin,true):fail('ID zahteva je već iskorišćen za druge podatke.',409,'FISCAL_OPERATION_CONFLICT');
+  if(!['confirmed',...(kind==='refund'?['shipped']:[])].includes(order.status))return fail('Prvo potvrdite porudžbinu; račun se ne evidentira za odbijenu ili otkazanu porudžbinu.',409);
+  if(String(order.operationsRevision)!==form.get('revision'))return fail('Porudžbina je promenjena. Osvežite prikaz.',409,'STALE_FISCAL_ORDER');
+  if(await env.DB.prepare("SELECT order_id FROM order_operations WHERE order_id<>? AND upper(replace(json_extract(data_json,'$.fiscalNumber'),' ',''))=?").bind(order.id,pfrKey).first())return fail('PFR broj je već u istorijskoj operativnoj evidenciji druge porudžbine.',409,'DUPLICATE_FISCAL_NUMBER');
+  if(await env.DB.prepare('SELECT order_id FROM fiscal_documents WHERE pfr_key=? OR (order_id=? AND kind=?)').bind(pfrKey,order.id,kind).first())return fail('PFR broj ili fiskalni dokument je već povezan. Ne izdajte novi račun; proverite postojeću evidenciju.',409,'DUPLICATE_FISCAL_NUMBER');
+  const raw=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(order.id).first();
+  const current=rowToOrder(raw);
+  if(current.status!==order.status||JSON.stringify(current.items)!==JSON.stringify(order.items)||current.customer.email!==recipient||current.payment!==order.payment||current.total!==order.total||current.shipping!==order.shipping||current.goodsTotal!==order.goodsTotal)return fail('Porudžbina je promenjena. Osvežite prikaz.',409,'STALE_FISCAL_ORDER');
+  if(kind==='refund'&&(sale.source_items!==raw.items_json||sale.source_email!==recipient||sale.source_payment!==order.payment||sale.source_total!==order.total||sale.source_goods!==order.goodsTotal||sale.source_shipping!==order.shipping))return fail('Originalna fiskalizovana porudžbina je izmenjena. Potrebna je ručna provera.',409);
+  const now=new Date().toISOString(),key=buffer?`fiscal/${order.id}/${crypto.randomUUID()}-${filename}`:null,
+    notificationKey=mode==='panel'?`fiscal-mail/${operationId}`:null;
+  if(buffer){if(!env.RECEIPTS)return fail('Skladište PDF dokumenata nije povezano.',503);await env.RECEIPTS.put(key,buffer,{httpMetadata:{contentType:'application/pdf'},customMetadata:{orderId:order.id}});}
+  const values=[pfrKey,pfr,order.id,kind,original,operationId,requestHash,issuedAt,cents,mode,deliveredAt,recipient,notificationKey,key,filename,pdfHash,reason.trim(),raw.items_json,recipient,order.payment,order.goodsTotal,order.shipping,order.total,now];
+  const statements=[env.DB.prepare(`INSERT INTO fiscal_documents VALUES(${values.map(()=>'?').join(',')})`).bind(...values)];
+  // A failed source/revision CAS aborts the entire batch, including the unique claim.
+  statements.push(env.DB.prepare(`UPDATE orders SET updated_at=?,receipt_key=CASE WHEN ?='sale' THEN ? ELSE receipt_key END,
+    receipt_filename=CASE WHEN ?='sale' THEN ? ELSE receipt_filename END WHERE id=? AND status=? AND payment=? AND customer_email=?
+    AND items_json=? AND goods_total=? AND shipping=? AND total=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)
+    AND NOT EXISTS(SELECT 1 FROM order_operations legacy WHERE legacy.order_id<>orders.id AND upper(replace(json_extract(legacy.data_json,'$.fiscalNumber'),' ',''))=?)`)
+    .bind(now,kind,key,kind,filename,order.id,order.status,order.payment,recipient,raw.items_json,order.goodsTotal,order.shipping,order.total,order.operationsRevision,pfrKey));
+  // CHECK failure on a transient helper insert forces D1 batch rollback on CAS loss.
+  statements.push(env.DB.prepare(`INSERT INTO fiscal_cas_assert(ok) SELECT changes()`));
+  statements.push(env.DB.prepare('DELETE FROM fiscal_cas_assert'));
+  statements.push(env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES(?,'fiscal_recorded',?,?)")
+    .bind(order.id,`Administrator · Ručno provereno: ${kind==='sale'?'prodaja':'puna refundacija'} ${pfr}; ${cents/100} RSD; ${mode==='minimax'?'slanje iz Minimax-a evidentirano':'PDF sačuvan za slanje'}; razlog: ${reason.trim()}`,now));
+  if(mode==='panel'){
+    const payload={from:FROM_EMAIL,to:[recipient],reply_to:BUSINESS_EMAIL,subject:`${kind==='sale'?'Fiskalni račun':'Fiskalna refundacija'} za porudžbinu ${order.id}`,
+      html:emailShell(`<h1>${kind==='sale'?'Fiskalni račun':'Puna refundacija'}</h1><p>U prilogu je fiskalni dokument za porudžbinu ${escapeHtml(order.id)}. PFR broj: ${escapeHtml(pfr)}.</p>`),
+      attachments:[{filename,r2Key:key}],tags:[{name:'category',value:'fiscal_document'},{name:'order_id',value:order.id}]};
+    statements.push(env.DB.prepare('INSERT INTO notification_outbox(operation_key,order_id,payload_json,metadata_json,created_at) VALUES(?,?,?,?,?)').bind(notificationKey,order.id,JSON.stringify(payload),JSON.stringify({fiscalKind:kind}),now));
+  }
+  try{await env.DB.batch(statements);}
+  catch(e){if(key)await env.RECEIPTS.delete(key).catch(()=>{});const duplicate=await env.DB.prepare('SELECT operation_id,request_hash FROM fiscal_documents WHERE pfr_key=? OR (order_id=? AND kind=?)').bind(pfrKey,order.id,kind).first();
+    if(duplicate?.operation_id===operationId&&duplicate.request_hash===requestHash)return notificationResponse(env,order.id,origin,true);
+    return fail(duplicate?'PFR broj ili dokument je već povezan.':'Podaci su promenjeni ili evidencija nije sačuvana. Osvežite prikaz.',409,duplicate?'DUPLICATE_FISCAL_NUMBER':'FISCAL_SAVE_CONFLICT');}
+  return notificationResponse(env,order.id,origin);
 }

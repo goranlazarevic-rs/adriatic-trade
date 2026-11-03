@@ -23,3 +23,7 @@ Fiskalni, platni i isporučni statusi su odvojeni. Otkazivanje ili povraćaj po�
 ## Provera
 
 `node tests/admin-operations.mjs` proverava dozvoljene promene, naplatu/refundaciju, konflikt konkurentnih izmena, istoriju, očuvanje cena i datumske filtere. Sintaksne provere: admin.js i Worker. Fizička štampa i provajderski API zahtevaju konkretan uređaj/izabranog provajdera.
+
+## Prvi prodajni režim 4.12.0
+
+FIRST_SALE_MODE=manual-minimax uključuje novu fiskalnu evidenciju i zaštitu isporuke. Operater izdaje u Minimax-u, a u panelu ručno proverava i povezuje PFR broj/vreme/iznos i originalni PDF; panel šalje PDF ili beleži provereno prethodno slanje iz Minimax-a. To nije automatska fiskalizacija niti API provera autentičnosti. Jedinstvenost obuhvata i istorijske fiskalne brojeve iz operativne evidencije. Izdati dokumenti se ne prepisuju generičkim operativnim obrascem. Puna refundacija povezuje se sa originalom i blokira isporuku; ne menja novac ili kvotu. Detaljno: FIRST-SALE-RUNBOOK.md i ../LAUNCH-CHECKLIST.md. Aktiviranje u produkciji i otvaranje prodaje zahtevaju posebno odobrenje.

@@ -9,7 +9,7 @@ https://help.minimax.rs/help/--rad-u-zalihama-veleprodaje--objasnjenje-kompletno
 
 ## Šta je implementirano
 
-`tools/minimax-reconciliation/model.mjs` je čist, deterministički obračun jednog preseka. Nema mreže, pristupa bazi, tajni, izdavanja dokumenata, kopiranja kvota ili promene istorije. Trenutno prihvata samo četiri sintetička FLOW scenarija, pet fizičkih SKU i organizaciju 81179 / skladište 40999. **Worker ga još ne poziva. Ne postoji nova ruta ili aktivacija u adminu.** Worker ostaje 4.11.0; postojeće čitanje zaliha i rezervacija ostaje isto.
+`tools/minimax-reconciliation/model.mjs` je čist, deterministički obračun jednog preseka. Nema mreže, pristupa bazi, tajni, izdavanja dokumenata, kopiranja kvota ili promene istorije. Trenutno prihvata samo četiri sintetička FLOW scenarija, pet fizičkih SKU i organizaciju 81179 / skladište 40999. **Worker ga još ne poziva. Ne postoji nova ruta ili aktivacija u adminu.** Novi fiskalni režim 4.12.0 opisan je u FIRST-SALE-RUNBOOK.md; Minimax rezervacioni model i dalje nije aktiviran.
 
 | Korak u modelu | Minimax stanje | Ukupna rezervacija | Već uključeno u stanje | Preostali odbitak | Probni ostatak |
 | --- | ---: | ---: | ---: | ---: | ---: |

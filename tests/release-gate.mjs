@@ -15,6 +15,11 @@ assert.ok(workflow.on.pull_request.paths.includes('assets/js/admin-probe.js'));
 assert.ok(workflow.on.pull_request.paths.includes('docs/MINIMAX-INTEGRATED-PROBA.md'));
 for(const file of ['tests/minimax-stock.mjs','tests/minimax-stock-browser.mjs','tests/minimax-reservations.mjs','tests/minimax-handoff.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
 for(const file of ['assets/js/admin-stock.js','docs/MINIMAX-STOCK-PREVIEW.md','docs/MINIMAX-RESERVATION-HANDOFF.md','tools/minimax-reconciliation/**'])assert.ok(workflow.on.pull_request.paths.includes(file),file);
+for(const file of ['tests/first-sale-fiscal.mjs','tests/first-sale-runtime.mjs','tests/first-sale-browser.mjs'])assert.ok(JSON.stringify(validate).includes(file),file);
+assert.ok(deploy.steps.find(s=>s.name==='Create deployment configuration').run.includes('FIRST_SALE_MODE: "manual-minimax"'));
+assert.ok(deploy.steps.find(s=>s.name==='Verify production Worker').run.includes('.firstSaleFiscal == true'));
+assert.ok(deploy.steps.find(s=>s.name==='Verify sales are paused before production deployment').run.includes('mode == \"paused\"'));
+for(const file of ['docs/FIRST-SALE-RUNBOOK.md','LAUNCH-CHECKLIST.md'])assert.ok(workflow.on.pull_request.paths.includes(file));
 const inputs = workflow.on.workflow_dispatch.inputs;
 
 assert.deepEqual(workflow.on.pull_request.paths, workflow.on.push.paths);
