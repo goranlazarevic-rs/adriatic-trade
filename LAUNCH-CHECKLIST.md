@@ -32,8 +32,8 @@ Aktuelne potvrde i otvorene stavke od 3.11: [docs/FIRST-SALE-READINESS.md](docs/
 
 ## Posebno odobrena objava
 
-- [ ] Vlasnik pregleda kandidat i posebno odobrava merge, potrebne migracije i produkcionu objavu sa prijemom pauziranim.
-- [ ] Backup D1. Po potrebi odobreno primenjeni checkout-availability-v1 i admin-availability-v1 SQL. Ne resetovati postojeće kvote, prijeme ili istoriju.
+- [x] Vlasnik 3.11.2026. odobrava merge, backup, potrebne migracije i produkcionu objavu sa prijemom zatvorenim od početka. Minimax Obuka ostaje uključena do završetka poslovnih preduslova. Pristup browserom takođe odobren.
+- [ ] Backup D1: workflow pre migracija proverava Cloudflare Time Travel bookmark i trajno čuva samo metadata artefakt. To je tačka oporavka u Cloudflare upravljanim rezervnim kopijama, ne zaseban SQL izvoz; važi unutar aktivnog Time Travel perioda čuvanja. Zatim primenjuje checkout-availability-v1 i admin-availability-v1 SQL i zatvara prijem. Ne resetuje postojeće kvote, prijeme ili istoriju.
 - [ ] Read-only release preflight potvrđuje pauzu; sam je ne menja. Fiskalne tabele inicijalizuju se samo u uključenom prvom prodajnom režimu.
 - [ ] FIRST_SALE_MODE=manual-minimax; DB/R2/Resend/Turnstile i Cron. Health potvrđuje 4.12.0 i firstSaleFiscal=true.
 - [ ] Usklađeni admin frontend i Worker. Samostalna Pages objava nije završena objava.

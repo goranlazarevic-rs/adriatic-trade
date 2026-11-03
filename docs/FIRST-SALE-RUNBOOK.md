@@ -39,6 +39,8 @@ Zvanični izvori:
 
 ## Objava i povratak
 
+Vlasnik je 3.11.2026. odobrio usklađenu produkcionu objavu, backup i potrebne migracije uz prijem zatvoren od početka. Pre migracija produkcioni job proverava Cloudflare D1 Time Travel bookmark i čuva metadata artefakt (bez sadržaja porudžbina), pa primenjuje dve idempotentne availability migracije i postavlja pauzu. Pre i posle objave proverava se `mode=paused`. Tačka oporavka važi u aktivnom Cloudflare periodu čuvanja rezervnih kopija; metadata artefakt sam nije SQL kopija baze. R2 dokumenti se ne brišu niti premeštaju. Minimax ostaje u Obuci; otvaranje prodaje nije odobreno.
+
 FIRST_SALE_MODE=manual-minimax se postavlja u pripremljenoj produkcionoj konfiguraciji; health izričito zahteva firstSaleFiscal=true. Bez toga ostaje raniji režim. Probni Minimax wrapper i dalje zabranjuje stvarnu fiskalizaciju, slanje i kurira.
 
 Pri problemu pauzirati nove prijeme, sačuvati postojeće porudžbine/PFR/PDF/mejlove i prvo proveriti spoljni ishod. Ne vraćati stariji Worker bez fiskalne kontrole dok je prodaja otvorena. Backup, migracije, objava i otvaranje ostaju posebno odobreni. Automatski Minimax/kurir i usaglašavanje zaliha ostaju kasnija automatizacija; mali početak koristi kontrolisane ručne korake i zasebnu jednom umanjenu webshop kvotu.

@@ -1,6 +1,6 @@
 # Priprema otvaranja — stanje 3.11.2026.
 
-Ovo je priprema za pregled, ne potvrda spremnosti ili nalog za objavu, izdavanje računa i otvaranje prodaje. Razvojni kandidat je Worker/admin 4.12.0 u Draft PR-u #19. Izvršni kod nije menjan ovom dopunom.
+Razvojni kandidat je Worker/admin 4.12.0 u PR-u #19. Vlasnik je 3.11.2026. naknadno izričito odobrio backup, potrebne migracije i usklađenu produkcionu objavu sa prijemom zatvorenim od početka, kao i browser pristup. Minimax Obuka ostaje uključena dok se ne zatvore poslovni preduslovi. Otvaranje prodaje, izdavanje stvarnih računa i slanja nisu odobreni ovim korakom. Tok objave sada uključuje proverenu D1 Time Travel tačku pre migracija i metadata artefakt, zatim idempotentne migracije/pauzu i proveru pauze pre i posle deploy-a.
 
 ## Potvrđeno i otvoreno
 
@@ -14,7 +14,7 @@ Ovo je priprema za pregled, ne potvrda spremnosti ili nalog za objavu, izdavanje
 | Razduženje zaliha | Vlasnik potvrđuje kvačicu „Smanjivanje zaliha neposredno računom“. | Potvrđen prijem, vrednovanje i slobodna roba; nacrt računa nije dokaz razduženja. Ne potvrđivati nulti nabavni prijem radi probe. |
 | Način plaćanja | Početni cilj je pouzeće; probni nacrti koriste TEST_BANK_TRANSFER / ID 622053. | Potvrditi stvarni fiskalni tip i knjiženje naplate prema dogovoru sa kurirom i knjigovođom. Test oznaka nije produkciono mapiranje. |
 | Program i kontrole | Kandidat bdaa789ba11bce45c9e7cacb6ae628306afb2f9e: Release Gate #63 uspešan; 38 novih i 154 prethodna Minimax/model testa, workerd/D1/R2 i browser 1440/390/320. | Posebno pregledati i odobriti usklađenu objavu; ovo nije živa fiskalna proba. Produkcioni deploy i staging u tom izvršavanju preskočeni. |
-| Stvarni produkcioni prijem | Iz ove prepiske nije nezavisno proverena aktuelna produkciona verzija/pauza; potvrđena ranija pauza odnosi se na probni prijem. | Pre objave očitati produkcioni status; ako kontrolna šema nedostaje, pripremiti odobrenu migraciju i pauzu, bez resetovanja postojećih porudžbina/kvota. |
+| Stvarni produkcioni prijem | Direktan javni HTTP pregled 3.11. potvrđuje Worker 4.8.0, admin.js 4.8.1 i main.js 3.17.0. Produkciona pauza nije potvrđena tim health odgovorom; ranija korisnička pauza odnosila se na probni prijem. | Odobreni release primenjuje potrebne migracije/pauzu pre novog Workera, bez resetovanja postojećih porudžbina/kvota. Zasebno proveriti objavljene verzije i zatvoren prijem. |
 
 ## Šta završavamo dok čekamo robu i kurira
 
@@ -22,7 +22,7 @@ Ovo je priprema za pregled, ne potvrda spremnosti ili nalog za objavu, izdavanje
 2. Pregledati **Poslovanje → Izdati računi → meni sa tri crtice → Načini plaćanja**. Zabeležiti nazive i postojeće tipove/knjiženja, bez kreiranja stvarnog računa. Posle dogovora sa kurirom utvrditi tačan postupak; ne označavati račun kao naplaćen samo zato što je pouzeće izabrano.
 3. Potvrditi početni kanal fiskalnog PDF-a. Kandidat podržava slanje originalnog PDF-a iz panela i ručno evidentiranje prethodnog slanja iz Minimax-a. Za prvi mali obim predlog je panel: izdati u Minimax-u, preuzeti originalni PDF, povezati i poslati konkretnoj adresi iz porudžbine. Potvrda porudžbine i fiskalni račun su dva odvojena mejla/događaja. Minimax stranka „Fizičko lice“ ne određuje adresu stvarnog kupca.
 4. Pripremiti ograničenu početnu raspodelu robe za webshop, svih pet SKU uključujući nule; konačno potvrditi tek kada je roba slobodna. Paketi i pojedinačni artikli troše iste komade. Knjigovodstvene zalihe ne prepisivati preko preostale kvote.
-5. Pregledati usklađeni kandidat, backup i konkretne potrebne migracije, bindings/Resend/Turnstile/Cron, pa pripremiti objavu sa pauzom. Merge, produkciona objava, stvarna slanja i otvaranje nisu obuhvaćeni ovom pripremom.
+5. Pregledati usklađeni kandidat, backup i konkretne potrebne migracije, bindings/Resend/Turnstile/Cron, pa izvršiti odobrenu objavu sa pauzom. Stvarna slanja, fiskalizacija i otvaranje nisu obuhvaćeni ovim odobrenjem.
 
 ## Prelazak numeracije 1428454-1 iz obuke
 

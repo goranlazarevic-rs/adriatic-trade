@@ -144,6 +144,7 @@ jobs:
           node --test tests/first-sale-fiscal.mjs
           node tests/checkout-security.mjs
           node tests/checkout-availability.mjs
+          node tests/production-migrations.mjs
           node --test tests/minimax-draft.mjs tests/minimax-admin.mjs tests/minimax-stock.mjs tests/minimax-reservations.mjs tests/minimax-handoff.mjs
           node tests/minimax-staging-policy.mjs
           node tests/inquiry-security.mjs
@@ -254,6 +255,34 @@ jobs:
               vars: {FIRST_SALE_MODE: "manual-minimax", TURNSTILE_SITE_KEY: "0x4AAAAAAFEPtKXCu1OUJtJ2"}
             }' > wrangler.deploy.json
 
+      - name: Record D1 recovery point before production migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 time-travel info adriatic-trade-orders-db --config wrangler.deploy.json --json > first-sale-time-travel.json
+          jq -e '.bookmark | type == "string" and length > 0' first-sale-time-travel.json
+          jq --arg database_id "$D1_DATABASE_ID" --arg revision "$GITHUB_SHA" --arg recorded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{database_id:$database_id,revision:$revision,recorded_at:$recorded_at,bookmark:.bookmark,backup_kind:"Cloudflare D1 managed Time Travel"}' \
+            first-sale-time-travel.json > first-sale-recovery.json
+
+      - name: Preserve production recovery metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: first-sale-recovery.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Apply approved availability migrations and pause intake
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --file cloudflare-d1-checkout-availability-v1.sql
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --file cloudflare-d1-admin-availability-v1.sql
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --command "UPDATE checkout_intake SET mode='paused',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),reason='Owner-approved production release 4.12.0; awaiting goods clearance and courier; do not open intake' WHERE id=1 AND mode!='paused'"
+
       - name: Verify sales are paused before production deployment
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -286,6 +315,15 @@ jobs:
             sleep 5
           done
           exit 1
+
+      - name: Confirm intake remains paused after deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --command "SELECT i.mode,c.revision,(SELECT COUNT(*) FROM orders) order_count,(SELECT COUNT(*) FROM checkout_stock) quota_rows FROM checkout_intake i JOIN checkout_control c ON c.id=i.id WHERE i.id=1" --json > first-sale-postflight.json
+          jq -e 'length == 1 and .[0].success == true and (.[0].results | length) == 1 and .[0].results[0].mode == "paused"' first-sale-postflight.json
+          jq '.[0].results' first-sale-postflight.json
 
   minimax-staging:
     if: github.event_name == 'workflow_dispatch' && inputs.deploy_minimax_staging == true && inputs.deploy_production != true

@@ -19,6 +19,19 @@ for(const file of ['tests/first-sale-fiscal.mjs','tests/first-sale-runtime.mjs',
 assert.ok(deploy.steps.find(s=>s.name==='Create deployment configuration').run.includes('FIRST_SALE_MODE: "manual-minimax"'));
 assert.ok(deploy.steps.find(s=>s.name==='Verify production Worker').run.includes('.firstSaleFiscal == true'));
 assert.ok(deploy.steps.find(s=>s.name==='Verify sales are paused before production deployment').run.includes('mode == \"paused\"'));
+const recoveryIndex=deploy.steps.findIndex(s=>s.name==='Record D1 recovery point before production migrations');
+const artifactIndex=deploy.steps.findIndex(s=>s.name==='Preserve production recovery metadata');
+const migrationIndex=deploy.steps.findIndex(s=>s.name==='Apply approved availability migrations and pause intake');
+const preflightIndex=deploy.steps.findIndex(s=>s.name==='Verify sales are paused before production deployment');
+assert.ok(recoveryIndex>0 && artifactIndex>recoveryIndex && migrationIndex>artifactIndex && preflightIndex>migrationIndex);
+assert.ok(deploy.steps[recoveryIndex].run.includes('d1 time-travel info'));
+assert.ok(deploy.steps[recoveryIndex].run.includes('jq -e'));
+assert.equal(deploy.steps[artifactIndex].with.path,'first-sale-recovery.json');
+assert.equal(deploy.steps[artifactIndex].with['if-no-files-found'],'error');
+assert.ok(deploy.steps[migrationIndex].run.includes("mode='paused'"));
+assert.ok(!deploy.steps[migrationIndex].run.includes("mode='open'"));
+assert.ok(deploy.steps.find(s=>s.name==='Confirm intake remains paused after deployment').run.includes('mode == "paused"'));
+assert.ok(JSON.stringify(validate).includes('tests/production-migrations.mjs'));
 for(const file of ['docs/FIRST-SALE-RUNBOOK.md','LAUNCH-CHECKLIST.md'])assert.ok(workflow.on.pull_request.paths.includes(file));
 const inputs = workflow.on.workflow_dispatch.inputs;
 
