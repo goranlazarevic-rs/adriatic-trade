@@ -8,3 +8,8 @@ node_modules/
 *.pfx
 
 .minimax-stage/
+.web-dist/
+.ops-private/
+*.atbak
+*.partial
+__pycache__/
