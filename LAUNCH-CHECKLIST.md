@@ -8,6 +8,8 @@ Prijem porudžbine i jedno umanjenje izdvojene webshop kvote → potvrda kupcu �
 
 Detaljno: [docs/FIRST-SALE-RUNBOOK.md](docs/FIRST-SALE-RUNBOOK.md).
 
+Aktuelne potvrde i otvorene stavke od 3.11: [docs/FIRST-SALE-READINESS.md](docs/FIRST-SALE-READINESS.md). Laboratorijska potvrda još nije dobijena, kurir je u pregovorima, a vlasnik potvrđuje uključen Režim obuke numeracije 1428454-1. Po završetku proba koristi se kontrolisan prelazak iste numeracije u redovan režim; ne pravi se nova samo zbog obuke.
+
 ## Tehnička provera tačnog kandidata
 
 - [ ] Jedinstveni PFR broj; sačuvani iznos/sastav i jedno povezivanje pri ponavljanju.
@@ -22,7 +24,8 @@ Detaljno: [docs/FIRST-SALE-RUNBOOK.md](docs/FIRST-SALE-RUNBOOK.md).
 
 - [ ] Roba je fizički i pravno slobodna za prodaju; potrebni dokumenti i deklaracije potvrđeni. Ranija laboratorijska/uvozna/registraciona pitanja ne smatraju se zatvorenim ovim kodom.
 - [ ] Potvrđeni stvarni lager, knjigovodstveni prijem i vrednovanje. Ne potvrđivati raniji nacrt prijema sa nultom nabavnom vrednošću radi probe.
-- [ ] Aktivna prava Minimax fiskalna blagajna/numeracija, sertifikat i poslovni prostor. API probni nacrti/numeracija nisu stvarni računi kupaca.
+- [ ] Aktivna prava Minimax fiskalna blagajna/numeracija, sertifikat i poslovni prostor; za prodaju isključena Obuka. Probni API nacrti nisu stvarni računi kupaca.
+- [ ] Pre isključivanja Obuke zaustavljen probni API za nacrte, ne samo probni prijem. Sedam sintetičkih nacrta ostaje neizdato; staging workflow se ne pokreće ponovo nad numeracijom koja je prešla u redovan rad.
 - [ ] Potvrđen fiskalni način plaćanja za pouzeće i dogovorenu bezgotovinsku naplatu. Uplata pre isporuke zahteva odgovarajući avansni/konačni postupak. TEST_BANK_TRANSFER nije produkciono mapiranje.
 - [ ] Izabran kurir; ugovoreni preuzimanje, težina, cena, pouzeće, prenos novca i povrat. Cena webshopa 420 RSD nije dokaz ugovorene kurirske cene.
 - [ ] Potvrđene ograničene početne slobodne webshop kvote svih pet SKU, uključujući nule. Minimax stanje se ne prepisuje automatski preko preostale kvote.
