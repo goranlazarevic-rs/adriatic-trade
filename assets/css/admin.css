@@ -17,3 +17,47 @@
 .admin-box textarea{width:100%;box-sizing:border-box}
 .admin-detail-body>.admin-box{margin-top:20px}
 @media(max-width:640px){.admin-toolbar>.field,.admin-toolbar>button{width:100%;flex-basis:100%}}
+
+.availability-status { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:16px; background:#eef5f5; border-radius:12px; margin:16px 0; }
+.availability-products { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.availability-product { border:1px solid #d6e2e3; border-radius:12px; padding:16px; min-width:0; }
+.availability-product h3 { font-size:17px; margin:0 0 12px; }
+.admin-availability p { margin:10px 0; }
+.admin-availability button { min-height:44px; white-space:normal; }
+.admin-availability { overflow-wrap:anywhere; }
+.availability-editor { border:2px solid #387a80; border-radius:12px; padding:20px; margin:20px 0; max-width:720px; }
+.availability-editor label { display:block; margin:14px 0; }
+.availability-editor input:not([type=checkbox]),.availability-editor textarea { display:block; width:100%; padding:12px; border:1px solid #9eb6b8; border-radius:8px; font:inherit; margin-top:8px; box-sizing:border-box; }
+.availability-editor .availability-check { display:flex; gap:12px; align-items:flex-start; }
+.availability-check input { width:22px; height:22px; flex-shrink:0; margin-top:2px; }
+.availability-bundles,.availability-history { padding-top:18px; }
+.admin-availability summary { cursor:pointer; padding:12px 0; font-weight:700; }
+.availability-history article { border-top:1px solid #d6e2e3; padding:12px 0; }
+@media(max-width:900px){.availability-products{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:600px){.availability-products{grid-template-columns:1fr;}.availability-status{align-items:stretch;flex-direction:column;}.availability-editor{padding:14px;}.admin-availability .admin-action-row{flex-direction:column;align-items:stretch;}}
+
+/* Fixed synthetic pilot cards must wrap their identifiers on phones. */
+[data-probe-section] .admin-box { min-width:0; overflow-wrap:anywhere; }
+[data-probe-section] button { white-space:normal; min-height:44px; }
+
+.admin-stock-content{min-width:0;margin-top:16px}
+.admin-stock-table-wrap{max-width:100%;overflow-x:auto;border:1px solid var(--line,#d6e2e3);border-radius:12px;margin-top:16px}
+.admin-stock-table-wrap:focus-visible{outline:3px solid var(--blue,#387a80);outline-offset:3px}
+.admin-stock-table{width:100%;min-width:620px;border-collapse:separate;border-spacing:0;font-size:.9rem;line-height:1.5}
+.admin-stock-table caption{text-align:left;padding:12px 14px;font-weight:700;color:var(--navy)}
+.admin-stock-table th,.admin-stock-table td{padding:12px 14px;border-top:1px solid var(--line,#d6e2e3);vertical-align:top;text-align:left;background:#fff}
+.admin-stock-table thead th{background:#edf4f6;font-weight:700;color:var(--navy)}
+.admin-stock-table tbody tr:nth-child(even)>*{background:#f4f8fa}
+.admin-stock-table th[scope=row]{font-weight:700;white-space:nowrap}
+.admin-stock-table .stock-number{text-align:right;font-variant-numeric:tabular-nums;min-width:90px}
+.admin-stock-table small{display:block;margin-top:4px;font-size:.78rem;font-weight:400;white-space:normal}
+.admin-stock-table .stock-warning{color:#8f332c}
+.admin-stock-bundles{max-width:620px}
+.admin-stock-bundles .admin-stock-table{min-width:0}
+@media(max-width:640px){.admin-stock-table{font-size:.85rem}.admin-stock-table th,.admin-stock-table td{padding:10px}.admin-stock-table:not([data-minimax-bundles-table]) th:first-child{position:sticky;left:0;z-index:1;box-shadow:1px 0 var(--line,#d6e2e3)}.admin-stock-table:not([data-minimax-bundles-table]) thead th:first-child{z-index:2}}
+[data-minimax-stock-read]{white-space:normal;min-height:44px;max-width:100%}
+
+[data-minimax-stock-message]{overflow-wrap:anywhere}
+
+[data-fiscal-panel]{overflow-wrap:anywhere}
+[data-fiscal-panel] input,[data-fiscal-panel] select,[data-fiscal-panel] textarea{min-width:0;max-width:100%}

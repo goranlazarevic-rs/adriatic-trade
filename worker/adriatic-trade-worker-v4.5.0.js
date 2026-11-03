@@ -118,7 +118,8 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.9.0",
+        version: "4.12.0",
+        firstSaleFiscal: firstSaleEnabled(env),
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -162,6 +163,8 @@ export default {
         return json({ ok: false, error: "D1 baza nije povezana sa Worker-om." }, 503, origin);
       }
       try {
+        if (url.pathname === "/admin/availability") return await handleAvailability(request, env, origin);
+        if (["/admin/minimax-stock","/admin/minimax-availability"].includes(url.pathname)) return await mmHandleStock(request, env, url, origin);
         if (url.pathname === "/admin/inquiries" && request.method === "GET") {
           await ensureInquirySchema(env.DB);
           await pruneInquiries(env.DB);
@@ -243,34 +246,17 @@ async function handleCreateOrder(request, env, origin) {
   let stored = false;
   let emailState = { business: false, customer: false };
   try {
-    let existing = await getOrderBySubmissionId(env.DB, order.submissionId);
-    if (!existing) {
+    const admission = await acceptOrder(env.DB, order, async()=>{
       order.securityFlags = [...new Set([
         ...getClientRiskFlags(validation.data.customer.email, body?.security?.startedAt),
         ...await getVelocityRiskFlags(env.DB, validation.data.customer.email, validation.data.customer.phone)
       ])];
-      try {
-        await admitOrder(env.DB, order);
-      } catch (error) {
-        // The entire batch rolls back on rejection or a racing duplicate. A lost
-        // response after commit can also be recovered by this durable lookup.
-        existing = await getOrderBySubmissionId(env.DB, order.submissionId);
-        if (!existing) {
-          const rejection = await orderAvailability(env.DB, order.items);
-          if (rejection) return json({ok:false, ...rejection.body}, rejection.status, origin);
-          throw error;
-        }
-      }
-    }
-    if (existing) {
-      if (orderRequestKey(existing) !== orderRequestKey(order)) {
-        return json({ok:false,code:"SUBMISSION_CONFLICT",error:"Porudžbina sa ovim identifikatorom već postoji sa drugim podacima. Kontaktirajte nas radi provere."},409,origin);
-      }
-      order = existing;
-      duplicate = true;
-      emailState.business = Boolean(existing.businessEmailSent);
-      emailState.customer = Boolean(existing.customerEmailSent);
-    }
+    });
+    if (admission.rejection) return json({ok:false,...admission.rejection.body},admission.rejection.status,origin);
+    order = admission.order;
+    duplicate = admission.duplicate;
+    emailState.business = Boolean(order.businessEmailSent);
+    emailState.customer = Boolean(order.customerEmailSent);
     stored = true;
   } catch (error) {
     console.error("Order admission unavailable");
@@ -357,6 +343,7 @@ async function handleAdmin(request, env, url, origin) {
   )`).run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS courier_export_access(id INTEGER PRIMARY KEY AUTOINCREMENT,batch_id TEXT NOT NULL,created_at TEXT NOT NULL,actor TEXT NOT NULL)').run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_courier_export_batch ON courier_export_orders(batch_id)').run();
+  if (url.pathname === '/admin/probe-orders' || url.pathname.startsWith('/admin/probe-orders/')) return mmHandleProbeOrder(request,env,url,origin);
   const excludeLocal="NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved')";
   const exportReady=excludeLocal+" AND orders.status='confirmed' AND json_extract(order_operations.data_json,'$.fulfillment')='ready' AND NOT EXISTS(SELECT 1 FROM courier_export_orders WHERE order_id=orders.id)";
   if(request.method==='GET' && url.pathname==='/admin/attention') {
@@ -429,13 +416,22 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry|minimax-draft|fiscal))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
   const action = match[2] || "";
-  const order = await getOrderById(env.DB, orderId);
+  const order = await getOrderById(env.DB, orderId, env);
   if (!order) return json({ ok: false, error: "Porudžbina nije pronađena." }, 404, origin);
+  if (action === 'minimax-draft') return mmHandleDraft(request, env, order, origin);
+  if (request.method === 'POST' && await mmStagingEnabled(env)) {
+    await mmEnsureSchema(env.DB);
+    const active = await env.DB.prepare("SELECT status FROM minimax_drafts WHERE order_id=? AND status IN ('sending','attention','created')").bind(order.id).first();
+    if (active) return json({ok:false,error:'Prvo proverite ishod prenosa Minimax nacrta. Porudžbina je privremeno zaključana.'},409,origin);
+  }
+
+  if (action === "fiscal") return handleFiscal(request,env,order,origin);
+  if(firstSaleEnabled(env)&&order.fiscalControl?.sale&&request.method==='POST'&&action==='local-payment')return json({ok:false,error:'Način plaćanja je vezan za evidentirani fiskalni račun. Potrebna je provera pre izmene.'},409,origin);
 
   if (request.method === "POST" && action === "email-retry") {
     await env.DB.prepare("UPDATE notification_outbox SET status='pending', next_attempt_at=?, attempts=0 WHERE order_id=? AND status='attention' AND (first_attempt_at IS NULL OR first_attempt_at>?)")
@@ -461,7 +457,7 @@ async function handleAdmin(request, env, url, origin) {
         .bind(order.id, "Administrator · Odobrena besplatna lokalna dostava za Novi Sad. Ukupan iznos je umanjen za dostavu, a IPS plaćanje je izabrano kao podrazumevano.", now)
     ]);
     if (!results[0].meta.changes) return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
-    return json({ ok: true, order: await getOrderById(env.DB, order.id) }, 200, origin);
+    return json({ ok: true, order: await getOrderById(env.DB, order.id, env) }, 200, origin);
   }
 
   if (request.method === "POST" && action === "local-payment") {
@@ -570,10 +566,13 @@ async function handleAdmin(request, env, url, origin) {
     if (!verification.ok) return json({ ok: false, error: verification.error }, 409, origin);
 
     let attachment = null;
+    const fiscalError=await fiscalReadyError(env,order);
+    if(fiscalError)return json({ok:false,error:fiscalError,code:"FISCAL_REQUIRED"},409,origin);
     let receiptUploaded = false;
     let receiptKey = order.receiptKey || "";
     let receiptFilename = order.receiptFilename || "";
     const receipt = form.get("receipt");
+    if(firstSaleEnabled(env)&&receipt?.size>0)return json({ok:false,error:"PDF se povezuje i šalje kroz odeljak Fiskalni račun."},409,origin);
     if (receipt && typeof receipt === "object" && typeof receipt.arrayBuffer === "function" && receipt.size > 0) {
       if (receipt.size > 5 * 1024 * 1024) return json({ ok: false, error: "PDF fiskalnog računa može imati najviše 5 MB." }, 413, origin);
       const filename = safePdfFilename(receipt.name || `fiskalni-racun-${order.id}.pdf`);
@@ -600,15 +599,15 @@ async function handleAdmin(request, env, url, origin) {
       to: [order.customer.email],
       reply_to: BUSINESS_EMAIL,
       subject: `Porudžbina ${order.id} je lično isporučena`,
-      html: localDeliveredEmailHtml(order, Boolean(attachment || receiptKey)),
+      html: localDeliveredEmailHtml(order, !firstSaleEnabled(env) && Boolean(attachment || receiptKey)),
       tags: [{ name: "category", value: "local_delivery_delivered" }, { name: "order_id", value: order.id }]
     };
-    if (attachment) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
+    if (attachment && !firstSaleEnabled(env)) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
 
     const now = new Date().toISOString();
     const next = { ...order.operations, ...verification.data, fulfillment: "delivered", paymentStatus: "paid", localDelivery: { ...order.operations.localDelivery, deliveredAt: now } };
     const results = await commitNotification(env, order.id, [
-      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed' AND payment=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)`).bind(now, now, receiptKey || null, receiptFilename || null, order.id, order.payment, order.operationsRevision),
+      env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier='Lična dostava', tracking_number='LIČNO', tracking_url=NULL, receipt_key=?, receipt_filename=? WHERE id=? AND status='confirmed' AND payment=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?) ${firstSaleEnabled(env)?'AND '+fiscalGuard():''}`).bind(now, now, receiptKey || null, receiptFilename || null, order.id, order.payment, order.operationsRevision),
       env.DB.prepare("UPDATE order_operations SET data_json=?, revision=revision+1 WHERE order_id=? AND revision=? AND changes()=1").bind(JSON.stringify(next), order.id, order.operationsRevision),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'local_delivery_delivered', ?, ? WHERE changes()=1").bind(order.id, `Administrator (zajednički ključ) · Lična isporuka završena. Uplata na račun proverena: ${next.remittanceDate}; referenca: ${next.paymentReference}. Email je sačuvan za slanje.`, now)
     ], payload).catch(async error => {
@@ -627,6 +626,8 @@ async function handleAdmin(request, env, url, origin) {
       return json({ok:false,error:'Operativna evidencija odbijene ili otkazane porudžbine je zaključana.'},409,origin);
     }
     let body; try { body=await request.json(); } catch { return json({ok:false,error:'Neispravan zahtev.'},400,origin); }
+    if(firstSaleEnabled(env)&&["fiscalNumber","fiscalProvider","fiscalReference"].some(k=>body[k]!==undefined&&(body[k]||'')!==(order.operations[k]||'')))return json({ok:false,error:"Fiskalni dokument povežite kroz odeljak Fiskalni račun."},409,origin);
+    if(firstSaleEnabled(env)&&body.paymentStatus==="refunded"&&!order.fiscalControl?.refund)return json({ok:false,error:"Prvo evidentirajte punu fiskalnu refundaciju iz Minimax-a."},409,origin);
     const current=order.operations;
     if (!Number.isInteger(body.revision) || body.revision!==order.operationsRevision) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
     const next={...current};
@@ -668,9 +669,10 @@ async function handleAdmin(request, env, url, origin) {
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'operations', ?, ? WHERE changes()=1").bind(order.id,note,now)
     ]);
     if(!results[0].meta.changes) return json({ok:false,error:'Podaci su promenjeni. Osvežite porudžbinu.'},409,origin);
-    return json({ok:true,order:await getOrderById(env.DB,order.id)},200,origin);
+    return json({ok:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
   }
   if (request.method === "GET" && !action) {
+    if (await mmStagingEnabled(env)) order.minimax = {enabled:true,ready:mmCredentialsReady(env)};
     return json({ ok: true, order }, 200, origin);
   }
 
@@ -790,6 +792,7 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Samo potvrđena, a neposlata porudžbina može biti otkazana." }, 409, origin);
     }
 
+    if(firstSaleEnabled(env)&&order.fiscalControl?.sale&&!order.fiscalControl?.refund)return json({ok:false,error:"Izdat je fiskalni račun. Prvo u Minimax-u uradite i evidentirajte punu refundaciju."},409,origin);
     const decision = await readDecisionReason(request);
     if (!decision.ok) return json({ ok: false, error: decision.error }, 400, origin);
 
@@ -806,7 +809,7 @@ async function handleAdmin(request, env, url, origin) {
     };
     const now = new Date().toISOString();
     const results = await commitNotification(env, order.id, [
-      env.DB.prepare("UPDATE orders SET status=?, updated_at=? WHERE id=? AND status=? AND payment=? AND total=?")
+      env.DB.prepare(`UPDATE orders SET status=?, updated_at=? WHERE id=? AND status=? AND payment=? AND total=? ${firstSaleEnabled(env)?"AND (NOT EXISTS(SELECT 1 FROM fiscal_documents WHERE order_id=orders.id AND kind='sale') OR EXISTS(SELECT 1 FROM fiscal_documents WHERE order_id=orders.id AND kind='refund'))":""}`)
         .bind("cancelled", now, order.id, "confirmed", order.payment, order.total),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, ?, ?, ? WHERE changes()=1")
         .bind(order.id, "cancelled", decisionEventNote("Porudžbina je otkazana", decision.data), now)
@@ -848,10 +851,13 @@ async function handleAdmin(request, env, url, origin) {
     }
 
     let attachment = null;
+    const fiscalError=await fiscalReadyError(env,order);
+    if(fiscalError)return json({ok:false,error:fiscalError,code:"FISCAL_REQUIRED"},409,origin);
     let receiptUploaded = false;
     let receiptKey = order.receiptKey || "";
     let receiptFilename = order.receiptFilename || "";
 
+    if(firstSaleEnabled(env)&&receipt?.size>0)return json({ok:false,error:"PDF se povezuje i šalje kroz odeljak Fiskalni račun."},409,origin);
     if (receipt && typeof receipt === "object" && typeof receipt.arrayBuffer === "function" && receipt.size > 0) {
       if (receipt.size > 5 * 1024 * 1024) {
         return json({ ok: false, error: "PDF fiskalnog računa može imati najviše 5 MB." }, 413, origin);
@@ -889,7 +895,7 @@ async function handleAdmin(request, env, url, origin) {
       if (!saved) return json({ ok: false, error: "Povezani fiskalni račun nije pronađen." }, 409, origin);
       attachment = { filename: receiptFilename };
     }
-    const shippedHtml = statusShippedEmailHtml(order, { courier, trackingNumber, trackingUrl, hasReceipt: Boolean(attachment || receiptKey) });
+    const shippedHtml = statusShippedEmailHtml(order, { courier, trackingNumber, trackingUrl, hasReceipt: !firstSaleEnabled(env) && Boolean(attachment || receiptKey) });
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
@@ -901,11 +907,11 @@ async function handleAdmin(request, env, url, origin) {
         { name: "order_id", value: order.id }
       ]
     };
-    if (attachment) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
+    if (attachment && !firstSaleEnabled(env)) payload.attachments = [{ filename: receiptFilename, r2Key: receiptKey }];
     const now = new Date().toISOString();
     const results = await commitNotification(env, order.id, [
       env.DB.prepare(`UPDATE orders SET status='shipped', shipped_at=?, updated_at=?, courier=?, tracking_number=?, tracking_url=?, receipt_key=?, receipt_filename=?
-        WHERE id=? AND status='confirmed' AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved')`)
+        WHERE id=? AND status='confirmed' AND NOT EXISTS(SELECT 1 FROM order_events WHERE order_id=orders.id AND event_type='local_delivery_approved') ${firstSaleEnabled(env)?'AND '+fiscalGuard():''}`)
         .bind(now, now, courier, trackingNumber, trackingUrl || null, receiptKey || null, receiptFilename || null, order.id),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'shipped', ?, ? WHERE changes()=1")
         .bind(order.id, `Porudžbina je poslata: ${courier}, broj pošiljke ${trackingNumber}. Email je sačuvan za slanje.`, now)
@@ -952,7 +958,7 @@ async function notificationResponse(env, orderId, origin, alreadyDone = false) {
   // to repeat the state change or delete a persisted receipt after a send failure.
   try { await flushNotificationOutbox(env, orderId, true); }
   catch (error) { console.error('Saved notification retry failed', error.message); }
-  const order = await getOrderById(env.DB, orderId);
+  const order = await getOrderById(env.DB, orderId, env);
   const emailPending = order.notifications.length > 0;
   return json({ ok: true, order, alreadyDone, emailPending,
     ...(emailPending ? { warning: 'Izmena je sačuvana. Email čeka slanje; proverite obaveštenja porudžbine.' } : {})
@@ -1069,6 +1075,96 @@ const BUNDLE_COMPONENTS = {
   "PKT-KOMPLET": {"10240":1,"10012":1,"10086":1}
 };
 
+const PHYSICAL_SKUS = Object.keys(PRODUCTS).filter(sku=>!Object.hasOwn(BUNDLE_COMPONENTS,sku));
+const MAX_QUOTA = 10000;
+const MAX_QUOTA_INCREASE = 100;
+
+// One SQLite statement supplies a coherent snapshot even while orders arrive.
+// Missing migration/control/gate is an error, never an implicit open state.
+async function availabilitySnapshot(db) {
+  const row=await db.prepare(`SELECT revision,
+    (SELECT mode FROM checkout_intake WHERE id=1) mode,
+    (SELECT json_group_array(json_object('sku',sku,'state',state,'remaining',remaining,'updatedAt',updated_at,'reason',reason)) FROM checkout_stock) stock,
+    (SELECT json_group_array(json_object('operationId',operation_id,'action',action,'sku',sku,'before',json(before_json),'after',json(after_json),'reason',reason,'actor',actor,'createdAt',created_at))
+      FROM (SELECT * FROM checkout_control_events ORDER BY created_at DESC,operation_id DESC LIMIT 20)) history
+    FROM checkout_control WHERE id=1`).first();
+  if (!row || !Number.isSafeInteger(row.revision) || !['paused','open'].includes(row.mode)) throw Error('Availability control missing');
+  const stock=new Map(JSON.parse(row.stock).map(p=>[p.sku,p]));
+  const products=PHYSICAL_SKUS.map(sku=>({sku,name:PRODUCTS[sku].name,...(stock.get(sku)||{state:'unknown',remaining:null,updatedAt:null,reason:''})}));
+  const confirmed=p=>['available','unavailable'].includes(p.state)&&Number.isSafeInteger(p.remaining)&&p.remaining>=0&&p.remaining<=MAX_QUOTA;
+  const bundles=Object.entries(BUNDLE_COMPONENTS).map(([sku,components])=>{
+    const parts=Object.entries(components).map(([part,units])=>({product:products.find(p=>p.sku===part),units}));
+    return {sku,name:PRODUCTS[sku].name,components,remaining:parts.every(({product})=>confirmed(product))
+      ?Math.min(...parts.map(({product,units})=>product.state==='available'?Math.floor(product.remaining/units):0)):null};
+  });
+  return {revision:row.revision,mode:row.mode,products,bundles,history:JSON.parse(row.history),
+    canOpen:products.every(confirmed)&&products.some(p=>p.state==='available'&&p.remaining>0),
+    limits:{maxQuota:MAX_QUOTA,maxIncrease:MAX_QUOTA_INCREASE}};
+}
+
+async function availabilityHash(value) {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(n=>n.toString(16).padStart(2,'0')).join('');
+}
+
+async function handleAvailability(request, env, origin) {
+  const fail=(message,status=400,code='INVALID_AVAILABILITY_CHANGE')=>json({ok:false,code,error:message},status,origin);
+  if (!['GET','POST'].includes(request.method)) return fail('Metod nije dozvoljen.',405);
+  let snapshot;
+  try {snapshot=await availabilitySnapshot(env.DB);} catch {return fail('Kontrola dostupnosti nije spremna. Potrebna je odobrena migracija; prodaja se ne otvara kroz ovaj panel.',503,'AVAILABILITY_NOT_READY');}
+  if (request.method==='GET') return json({ok:true,...snapshot},200,origin);
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('Content-Type')||'')) return fail('Očekivan je JSON zahtev.',415);
+  let b;try {b=await readInquiryBody(request,4096);}catch(error){return fail(error.message==='large'?'Zahtev je prevelik.':'Neispravan JSON.',error.message==='large'?413:400);}
+  const allowed=['operationId','revision','action','sku','quantity','reason','confirmed','confirmation','increaseConfirmed','readinessConfirmed'];
+  if (!b || Array.isArray(b) || typeof b!=='object' || Object.keys(b).some(k=>!allowed.includes(k))) return fail('Nepoznata polja zahteva.');
+  if (typeof b.operationId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(b.operationId)||!Number.isSafeInteger(b.revision)||b.revision<0||
+    !['pause','open','quantity'].includes(b.action)||typeof b.reason!=='string'||b.reason.trim().length<5||b.reason.length>500||b.confirmed!==true) return fail('Potvrdite promenu i unesite razlog (5–500 znakova).');
+  const reason=b.reason.trim();
+  if (b.action==='quantity') {
+    if (!PHYSICAL_SKUS.includes(b.sku)||!Number.isSafeInteger(b.quantity)||b.quantity<0||b.quantity>MAX_QUOTA) return fail('Izaberite fizički proizvod i ceo broj od 0 do '+MAX_QUOTA+'.');
+  } else if (b.sku!==undefined||b.quantity!==undefined) return fail('Status prodaje ne menja količine.');
+  // Hash the complete canonical request. Replaying the same operation is safe,
+  // while reusing its ID with different content is always a conflict.
+  const canonical=JSON.stringify(Object.fromEntries(allowed.map(k=>[k,b[k]]).filter(([,v])=>v!==undefined)));
+  const hash=await availabilityHash(canonical);
+  const previous=()=>env.DB.prepare('SELECT request_hash FROM checkout_control_events WHERE operation_id=?').bind(b.operationId).first();
+  const replay=async old=>old.request_hash===hash?json({ok:true,duplicate:true,operationId:b.operationId},200,origin):fail('Oznaka zahteva je već iskorišćena za drugu promenu.',409,'OPERATION_CONFLICT');
+  const old=await previous();if (old) return replay(old);
+  if (snapshot.revision!==b.revision) return fail('Podaci su promenjeni. Osvežite pregled i ponovo proverite količine.',409,'STALE_AVAILABILITY');
+  let before,after;
+  if (b.action==='quantity') {
+    const p=snapshot.products.find(p=>p.sku===b.sku);
+    before={state:p.state,remaining:p.remaining};after={state:b.quantity>0?'available':'unavailable',remaining:b.quantity};
+    const increase=b.quantity-(p.state==='available'&&Number.isSafeInteger(p.remaining)?p.remaining:0);
+    if (increase>MAX_QUOTA_INCREASE) return fail('Najveće povećanje po potvrdi je '+MAX_QUOTA_INCREASE+' komada. Za veće izdvajanje potrebna je posebna operativna provera.');
+    if (increase>0&&(b.increaseConfirmed!==true||b.confirmation!==`${b.sku} ${b.quantity}`)) return fail('Potvrdite fizički proverenu slobodnu količinu i upišite SKU i novu kvotu.');
+    if (before.state===after.state&&before.remaining===after.remaining) return fail('Količina je već evidentirana.');
+  } else {
+    before={mode:snapshot.mode};after={mode:b.action==='open'?'open':'paused'};
+    if (before.mode===after.mode) return fail('Prodaja je već u izabranom statusu.');
+    if (b.action==='open'&&(!snapshot.canOpen||b.readinessConfirmed!==true||b.confirmation!=='OTVORI PRODAJU')) return fail('Otvaranje zahteva svih pet potvrđenih kvota, raspoloživu robu i izričitu potvrdu operativne spremnosti.');
+  }
+  const now=new Date().toISOString();
+  const actor='admin-key:'+(await availabilityHash(env.ADMIN_TOKEN)).slice(0,12);
+  const guard=env.DB.prepare(`INSERT INTO checkout_control_events(operation_id,request_hash,action,sku,revision_before,before_json,after_json,reason,actor,created_at,applied)
+    VALUES (?,?,?,?,?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM checkout_control WHERE id=1 AND revision=?)
+      AND EXISTS(SELECT 1 FROM checkout_intake WHERE id=1) THEN 1 ELSE 0 END)`)
+    .bind(b.operationId,hash,b.action,b.sku||null,b.revision,JSON.stringify(before),JSON.stringify(after),reason,actor,now,b.revision);
+  const update=b.action==='quantity'
+    ?env.DB.prepare(`INSERT INTO checkout_stock(sku,state,remaining,updated_at,reason) VALUES (?,?,?,?,?)
+      ON CONFLICT(sku) DO UPDATE SET state=excluded.state,remaining=excluded.remaining,updated_at=excluded.updated_at,reason=excluded.reason`)
+      .bind(b.sku,after.state,after.remaining,now,reason)
+    :env.DB.prepare('UPDATE checkout_intake SET mode=?,updated_at=?,reason=? WHERE id=1').bind(after.mode,now,reason);
+  try {await env.DB.batch([guard,update]);}
+  catch {
+    // Also recovers a successful commit whose response was lost.
+    const existing=await previous();if (existing) return replay(existing);
+    const current=await availabilitySnapshot(env.DB);
+    if (current.revision!==b.revision) return fail('Podaci su promenjeni tokom čuvanja. Osvežite pregled i proverite promenu.',409,'STALE_AVAILABILITY');
+    return fail('Promena nije potvrđena. Ponovite isti zahtev; ne pravite novu korekciju.',503,'AVAILABILITY_WRITE_FAILED');
+  }
+  return json({ok:true,duplicate:false,operationId:b.operationId},200,origin);
+}
+
 function stockRequirements(items) {
   const required = new Map();
   for (const {sku,qty} of items) {
@@ -1125,12 +1221,33 @@ async function admitOrder(db, order) {
   await db.batch(statements);
 }
 
+// Replays always use the accepted snapshot, including its prices and package
+// contents. No retry re-debits quotas or rebuilds a previously accepted order.
+async function acceptOrder(db, order, beforeAdmission=async()=>{}) {
+  let existing = await getOrderBySubmissionId(db, order.submissionId);
+  if (!existing) {
+    await beforeAdmission();
+    try { await admitOrder(db, order); }
+    catch (error) {
+      existing = await getOrderBySubmissionId(db, order.submissionId);
+      if (!existing) {
+        const rejection = await orderAvailability(db, order.items);
+        if (rejection) return {rejection};
+        throw error;
+      }
+    }
+  }
+  if (existing && orderRequestKey(existing) !== orderRequestKey(order)) return {rejection:{status:409,body:{
+    code:'SUBMISSION_CONFLICT',error:'Porudžbina sa ovim identifikatorom već postoji sa drugim podacima. Kontaktirajte nas radi provere.'}}};
+  return {order:existing||order,duplicate:Boolean(existing)};
+}
+
 async function getOrderBySubmissionId(db, submissionId) {
   const row = await db.prepare("SELECT * FROM orders WHERE submission_id = ? LIMIT 1").bind(submissionId).first();
   return row ? rowToOrder(row) : null;
 }
 
-async function getOrderById(db, id) {
+async function getOrderById(db, id, env=null) {
   const row = await db.prepare("SELECT * FROM orders WHERE id = ? LIMIT 1").bind(id).first();
   if (!row) return null;
   await db.prepare("INSERT OR IGNORE INTO order_operations(order_id) VALUES (?)").bind(id).run();
@@ -1144,6 +1261,7 @@ async function getOrderById(db, id) {
   const notifications = await db.prepare("SELECT id, status, attempts, last_error FROM notification_outbox WHERE order_id=? AND status!='sent' ORDER BY id").bind(id).all();
   order.notifications = notifications.results || [];
   if (isApprovedLocalDelivery(order)) order.bankTransfer = bankTransferDetails(order);
+  if (firstSaleEnabled(env)) order.fiscalControl = await fiscalView(db,order);
   return order;
 }
 
@@ -1561,9 +1679,9 @@ function validateInquiry(body) {
   data.Saglasnost = 'Da';
   return {type,fields:data,submissionId:submissionId.toLowerCase()};
 }
-async function readInquiryBody(request) {
+async function readInquiryBody(request, maxBytes=20000) {
   // Bound actual streamed bytes even without Content-Length (chunked requests).
-  if (Number(request.headers.get('Content-Length'))>20000) throw new Error('large');
+  if (Number(request.headers.get('Content-Length'))>maxBytes) throw new Error('large');
   const reader = request.body?.getReader();
   if (!reader) throw new Error('json');
   let bytes = 0; const chunks = [];
@@ -1571,7 +1689,7 @@ async function readInquiryBody(request) {
     for (;;) {
       const {done,value} = await reader.read(); if (done) break;
       bytes += value.byteLength;
-      if (bytes>20000) { await reader.cancel(); throw new Error('large'); }
+      if (bytes>maxBytes) { await reader.cancel(); throw new Error('large'); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
@@ -1873,7 +1991,8 @@ function buildOrder(data) {
       name: p.name,
       detail: p.detail,
       unitPrice,
-      lineTotal: unitPrice * qty
+      lineTotal: unitPrice * qty,
+      ...(Object.hasOwn(BUNDLE_COMPONENTS,sku) ? {packageVersion:'v1',bundleComponents:Object.entries(BUNDLE_COMPONENTS[sku]).map(([component,units])=>({sku:component,units,referenceUnitPrice:PRODUCTS[component].price}))} : {})
     };
   });
 
@@ -2168,4 +2287,557 @@ function courierCsv(orders,batch) {
   const cell=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
   const rows=orders.map(o=>[batch.id,batch.created_at,o.id,o.customer.firstName,o.customer.lastName,o.customer.phone,o.customer.email,o.delivery.address,o.delivery.postalCode,o.delivery.city,o.delivery.method,o.goodsTotal,o.shipping,o.total,isBankLocalPayment(o)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total]);
   return '\uFEFF'+[header,...rows].map(row=>row.map(cell).join(';')).join('\r\n');
+}
+
+// Admin draft pilot. Disabled unless an isolated database explicitly identifies
+// itself as staging. No issuing action, arbitrary API URL or automatic retry.
+const MM_ITEMS = {
+  '10086': [13473518,600,'Cvet soli 100 g – natron vrećica – BIO'],
+  '10012': [13473554,800,'Cvet soli 125 g - kutija - BIO'],
+  '10306': [13473557,299,'Sitna morska so 600 g - ZIP - BIO'],
+  '10307': [13473558,299,'Gruba morska so 600 g - ZIP - BIO'],
+  '10240': [13473560,550,'Sitna morska so 500 g - tuljak - BIO'],
+  'DOSTAVA': [13473586,420,'Dostava']
+};
+const MM_API = 'https://moj.minimax.rs/RS/API/api/';
+function mmDemand(ok,code) { if(!ok) throw new Error(code); }
+function mmCents(n) {
+  mmDemand(typeof n==='number' && Number.isFinite(n) && n>=0 && Number.isSafeInteger(Math.round(n*100)) && Math.abs(n*100-Math.round(n*100))<0.00001,'INVALID_AMOUNT');
+  return Math.round(n*100);
+}
+async function mmStagingEnabled(env) {
+  if(env.MINIMAX_MODE!=='draft' || env.MINIMAX_ENV!=='staging' || !env.DB) return false;
+  try {return (await env.DB.prepare("SELECT name FROM minimax_environment WHERE id=1").first())?.name==='minimax-staging';} catch {return false;}
+}
+function mmCredentialsReady(env) {
+  return env.MINIMAX_USERNAME==='adriatic-webshop' && ['MINIMAX_CLIENT_ID','MINIMAX_CLIENT_SECRET','MINIMAX_USERNAME','MINIMAX_PASSWORD'].every(k=>typeof env[k]==='string' && env[k].length>0 && env[k].length<=2000);
+}
+async function mmEnsureSchema(db) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS minimax_drafts (
+    order_id TEXT PRIMARY KEY, operation_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL, payload_json TEXT NOT NULL, preview_hash TEXT NOT NULL,
+    external_id INTEGER, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`).run();
+}
+// Allocate each saved package price in cents. Never reprice an accepted order.
+function mmAllocate(total,components) {
+  const weight=components.reduce((s,c)=>s+c.units*mmCents(c.referenceUnitPrice),0);
+  mmDemand(weight>0,'INVALID_PACKAGE');
+  const parts=components.map(c=>{
+    const product=total*c.units*mmCents(c.referenceUnitPrice);
+    mmDemand(Number.isSafeInteger(product),'INVALID_PACKAGE');
+    return {...c,amount:Math.floor(product/weight),remainder:product%weight};
+  });
+  const extra=total-parts.reduce((s,c)=>s+c.amount,0);
+  [...parts].sort((a,b)=>b.remainder-a.remainder||a.sku.localeCompare(b.sku)).slice(0,extra).forEach(c=>c.amount++);
+  return parts;
+}
+function mmBuildPlan(order,day=belgradeDateKey()) {
+  mmDemand(/^AT-MMTEST-[A-Z0-9-]{1,60}$/.test(order.id) && order.customer?.email==='minimax-test@example.invalid','TEST_ORDERS_ONLY');
+  mmDemand(order.status==='confirmed','ORDER_NOT_CONFIRMED');
+  mmDemand(order.payment==='TEST_BANK_TRANSFER','PAYMENT_MAPPING_REQUIRED');
+  mmDemand(order.operations?.paymentStatus==='unpaid','PAYMENT_ALREADY_RECORDED');
+  mmDemand(!(order.events||[]).some(e=>e.event_type==='security_flag') || order.operations?.riskReview==='approved','RISK_REVIEW_REQUIRED');
+  mmDemand(Array.isArray(order.items) && order.items.length>0 && order.items.length<=20,'INVALID_ITEMS');
+  mmDemand(/^\d{4}-\d{2}-\d{2}$/.test(day) && new Date(day+'T00:00:00Z').toISOString().slice(0,10)===day,'INVALID_DATE');
+  let goods=0,units=0; const rows=[],seen=new Set();
+  function row(sku,qty,price,description='') {
+    mmDemand(Object.hasOwn(MM_ITEMS,sku) && Number.isSafeInteger(qty) && qty>0 && qty<=200,'INVALID_ITEM');
+    const [id,,name]=MM_ITEMS[sku];
+    rows.push({RowNumber:rows.length+1,Item:{ID:id},ItemCode:sku,ItemName:name,Quantity:qty,UnitOfMeasurement:'kom',
+      Price:Number((price/100/1.2).toFixed(6)),PriceWithVAT:price/100,Value:price*qty/100,
+      VATPercent:20,VatRate:{ID:4},VatAccountingType:'3.2',Discount:0,DiscountPercent:0,
+      Warehouse:sku==='DOSTAVA'?null:{ID:40999},OtherTaxesAndDuties:'N',...(description?{Description:description}:{})});
+  }
+  for(const item of order.items) {
+    mmDemand(!seen.has(item.sku),'DUPLICATE_SKU');seen.add(item.sku);
+    mmDemand(Number.isSafeInteger(item.qty) && item.qty>0 && item.qty<=20,'INVALID_QUANTITY');units+=item.qty;
+    const unit=mmCents(item.unitPrice); mmDemand(unit>0 && unit<=2000000,'INVALID_AMOUNT');
+    mmDemand(mmCents(item.lineTotal)===unit*item.qty,'LINE_TOTAL_MISMATCH');goods+=unit*item.qty;
+    if(Object.hasOwn(BUNDLE_COMPONENTS,item.sku)) {
+      mmDemand(item.packageVersion==='v1' && Array.isArray(item.bundleComponents),'PACKAGE_SNAPSHOT_REQUIRED');
+      const expected=Object.entries(BUNDLE_COMPONENTS[item.sku]).sort();
+      const actual=[...item.bundleComponents].sort((a,b)=>String(a.sku).localeCompare(String(b.sku)));
+      mmDemand(actual.length===expected.length && actual.every((c,i)=>c.sku===expected[i][0] && c.units===expected[i][1] && c.referenceUnitPrice===MM_ITEMS[c.sku]?.[1]),'INVALID_PACKAGE_SNAPSHOT');
+      for(const c of mmAllocate(unit,actual)) {
+        const p=Math.floor(c.amount/c.units),remainder=c.amount%c.units;
+        if(c.units>remainder)row(c.sku,(c.units-remainder)*item.qty,p,`Paket ${item.sku}; cena paketa ${item.unitPrice} RSD`);
+        if(remainder)row(c.sku,remainder*item.qty,p+1,`Paket ${item.sku}; cena paketa ${item.unitPrice} RSD`);
+      }
+    } else {mmDemand(item.sku!=='DOSTAVA','INVALID_ITEM');row(item.sku,item.qty,unit);}
+  }
+  mmDemand(units<=20 && mmCents(order.goodsTotal)===goods,'GOODS_TOTAL_MISMATCH');
+  const shipping=mmCents(order.shipping),total=mmCents(order.total);
+  mmDemand([0,42000].includes(shipping) && total===goods+shipping && total<=20000000,'ORDER_TOTAL_MISMATCH');
+  if(shipping)row('DOSTAVA',1,shipping);
+  mmDemand(rows.reduce((s,r)=>s+mmCents(r.Value),0)===total,'ALLOCATION_MISMATCH');
+  const payload={Status:'O',InvoiceType:'R',PricesOnInvoice:'D',DocumentNumbering:{ID:77630},Customer:{ID:9775669},Employee:{ID:408672},Currency:{ID:2},
+    DateIssued:day,DateTransaction:day,DateTransactionFrom:day,DateDue:day,
+    AddresseeName:'API probni kupac',AddresseeAddress:'/',AddresseePostalCode:'21208',AddresseeCity:'Sremska Kamenica',AddresseeCountry:{ID:3},
+    Rabate:0,ExchangeRate:1,RecurringInvoice:'N',InvoiceForPeriod:'N',ForwardToCRF:'N',ForwardToSEF:'Zbirno',
+    DocumentReference:`WEBSHOP:${order.id}`,DescriptionAbove:'PROBA API - NACRT. Ne izdavati. Nije stvarna porudžbina.',IssuedInvoiceRows:rows,
+    IssuedInvoicePaymentMethods:[{PaymentMethod:{ID:622053},Amount:order.total,AmountInDomesticCurrency:order.total,AlreadyPaid:'N'}]};
+  return {payload,total:order.total};
+}
+function mmSource(order) {
+  return JSON.stringify({id:order.id,status:order.status,updatedAt:order.updatedAt,items:order.items,goodsTotal:order.goodsTotal,
+    shipping:order.shipping,total:order.total,payment:order.payment,customer:order.customer,delivery:order.delivery,
+    revision:order.operationsRevision,operations:order.operations,security:(order.events||[]).filter(e=>e.event_type==='security_flag')});
+}
+async function mmHash(text) {return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(n=>n.toString(16).padStart(2,'0')).join('');}
+function mmView(job,plan,hash,changed=false) {
+  return {ok:true,status:job?.status||'preview',previewHash:hash,sourceChanged:changed,invoiceId:job?.external_id||null,
+    link:job?.external_id?`https://moj.minimax.rs/RS/VA/WebUI/IzdanRacun/IzdanRacunView.aspx?iracid=${job.external_id}&pgat=pgatv`:null,
+    lastError:job?.last_error||null,total:plan.total,
+    rows:plan.payload.IssuedInvoiceRows.map(r=>({sku:r.ItemCode,name:r.ItemName,qty:r.Quantity,price:r.PriceWithVAT,value:r.Value,description:r.Description||''}))};
+}
+async function mmReadBody(request) {
+  mmDemand((request.headers.get('Content-Type')||'').split(';')[0]==='application/json','INVALID_REQUEST');
+  mmDemand(request.body,'INVALID_REQUEST'); const reader=request.body.getReader(),decoder=new TextDecoder();let size=0,text='';
+  try {while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;mmDemand(size<=8192,'REQUEST_TOO_LARGE');text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();return JSON.parse(text);} catch {throw new Error('INVALID_REQUEST');} finally {await reader.cancel().catch(()=>{});}
+}
+async function mmRequest(url,options) {
+  const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),15000);
+  try {
+    const response=await fetch(url,{...options,redirect:'manual',signal:abort.signal});
+    if(!response.ok)throw Object.assign(new Error('MINIMAX_HTTP_ERROR'),{upstreamStatus:response.status});
+    const text=await response.text();mmDemand(text.length<2000000,'MINIMAX_INVALID_RESPONSE');
+    return {status:response.status,headers:response.headers,text};
+  } catch(error) {
+    const safe=new Error(['MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE'].includes(error.message)?error.message:abort.signal.aborted?'MINIMAX_TIMEOUT':'MINIMAX_NETWORK_ERROR');
+    if(error.message==='MINIMAX_HTTP_ERROR' && Number.isInteger(error.upstreamStatus) && error.upstreamStatus>=300 && error.upstreamStatus<=599)safe.upstreamStatus=error.upstreamStatus;
+    throw safe;
+  }
+  finally {clearTimeout(timer);}
+}
+function mmJson(text) {try{return JSON.parse(text);}catch {throw new Error('MINIMAX_INVALID_RESPONSE');}}
+async function mmLogin(env) {
+  mmDemand(mmCredentialsReady(env),'MINIMAX_SECRETS_REQUIRED');
+  const response=await mmRequest('https://moj.minimax.rs/RS/AUT/oauth20/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'},
+    body:new URLSearchParams({client_id:env.MINIMAX_CLIENT_ID,client_secret:env.MINIMAX_CLIENT_SECRET,username:env.MINIMAX_USERNAME,password:env.MINIMAX_PASSWORD,grant_type:'password',scope:'minimax.rs'}).toString()});
+  const auth=mmJson(response.text);mmDemand(typeof auth.access_token==='string' && auth.access_token.length>0 && String(auth.token_type).toLowerCase()==='bearer','MINIMAX_INVALID_AUTH');
+  return auth.access_token;
+}
+async function mmGet(token,path) {
+  const result=await mmRequest(MM_API+path,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'}});
+  return mmJson(result.text);
+}
+async function mmPreflight(token,payload) {
+  const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
+  mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
+  const data=await mmGet(token,'orgs/81179/items/pricelists?CustomerId=9775669');
+  mmDemand(Array.isArray(data.Rows) && Array.isArray(data.ValidationMessages) && !data.ValidationMessages.length,'MINIMAX_INVALID_PRICELIST');
+  for(const sku of new Set(payload.IssuedInvoiceRows.map(r=>r.ItemCode))) {
+    const [id,gross]=MM_ITEMS[sku];
+    const rows=data.Rows.filter(r=>r.Item?.ID===id && r.Customer?.ID===9775669 && r.Warehouse==null);
+    mmDemand(rows.length===1 && rows[0].Code===sku && rows[0].UnitOfMeasurement==='kom' && mmCents(rows[0].PriceWithVAT)===gross*100 &&
+      typeof rows[0].PriceWithoutVAT==='number' && Math.abs(rows[0].PriceWithoutVAT-gross/1.2)<=0.000001,'MINIMAX_CUSTOMER_PRICE_CHANGED');
+  }
+}
+// Synthetic reservation calculation only. No quota writes or release by invoice status.
+function mmReservationUnits(items) {
+  mmDemand(Array.isArray(items)&&items.length>0&&items.length<=20,'MINIMAX_INVALID_RESERVATIONS');
+  const totals=new Map(),seen=new Set();
+  const add=(sku,qty)=>{mmDemand(PHYSICAL_SKUS.includes(sku)&&Number.isSafeInteger(qty)&&qty>0&&qty<=10000,'MINIMAX_INVALID_RESERVATIONS');totals.set(sku,(totals.get(sku)||0)+qty);};
+  for(const item of items){
+    mmDemand(item&&typeof item.sku==='string'&&!seen.has(item.sku)&&Number.isSafeInteger(item.qty)&&item.qty>0&&item.qty<=20,'MINIMAX_INVALID_RESERVATIONS');seen.add(item.sku);
+    if(Object.hasOwn(BUNDLE_COMPONENTS,item.sku)){
+      mmDemand(typeof item.packageVersion==='string'&&/^v[1-9]\d{0,3}$/.test(item.packageVersion)&&Array.isArray(item.bundleComponents)&&item.bundleComponents.length>0&&item.bundleComponents.length<=5,'MINIMAX_INVALID_RESERVATIONS');
+      const parts=new Set();
+      for(const c of item.bundleComponents){mmDemand(c&&!parts.has(c.sku)&&Number.isSafeInteger(c.units)&&c.units>0&&c.units<=20,'MINIMAX_INVALID_RESERVATIONS');parts.add(c.sku);add(c.sku,item.qty*c.units);}
+    }else{mmDemand(item.bundleComponents===undefined,'MINIMAX_INVALID_RESERVATIONS');add(item.sku,item.qty);}
+  }
+  return [...totals].sort(([a],[b])=>a.localeCompare(b)).map(([sku,qty])=>({sku,qty}));
+}
+async function mmReservationSnapshot(db) {
+  const hasJournal=Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='minimax_drafts'").first());
+  // One SELECT captures all local inputs; LIMIT 5 detects overflow of the four fixed probes.
+  const fields=hasJournal?"j.status draftStatus,j.external_id invoiceId,j.payload_json planJson,j.preview_hash planHash":"NULL draftStatus,NULL invoiceId,NULL planJson,NULL planHash";
+  const row=await db.prepare(`SELECT (SELECT revision FROM checkout_control WHERE id=1) revision,
+    (SELECT mode FROM checkout_intake WHERE id=1) mode,
+    (SELECT json_group_array(json_object('submissionId',submission_id,'requirementsJson',requirements_json,'orderId',order_id,'status',order_status,'itemsJson',items_json,'payment',payment,'email',email,'draftStatus',draftStatus,'invoiceId',invoiceId,'planJson',planJson,'planHash',planHash))
+    FROM (SELECT a.submission_id,a.requirements_json,o.id order_id,o.status order_status,o.items_json,o.payment,o.customer_email email,${fields}
+      FROM checkout_admissions a LEFT JOIN orders o ON o.submission_id=a.submission_id ${hasJournal?'LEFT JOIN minimax_drafts j ON j.order_id=o.id':''}
+      ORDER BY a.submission_id LIMIT 5)) reservations`).first();
+  mmDemand(row&&Number.isSafeInteger(row.revision)&&row.revision>=0&&['paused','open'].includes(row.mode),'MINIMAX_INVALID_RESERVATIONS');
+  let entries;try{entries=JSON.parse(row.reservations);}catch{throw Error('MINIMAX_INVALID_RESERVATIONS');}
+  mmDemand(Array.isArray(entries)&&entries.length<=4,'MINIMAX_INVALID_RESERVATIONS');
+  const reserved=Object.fromEntries(PHYSICAL_SKUS.map(sku=>[sku,0])),ids=new Set();
+  for(const e of entries){
+    mmDemand(/^AT-MMTEST-FLOW-(STANDARD|PAKET|BESPLATNA|GURMAN)$/.test(e.submissionId)&&e.orderId===e.submissionId&&e.email==='minimax-test@example.invalid'&&e.payment==='TEST_BANK_TRANSFER'&&['new','confirmed'].includes(e.status),'MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');
+    let required,items;try{required=JSON.parse(e.requirementsJson);items=JSON.parse(e.itemsJson);}catch{throw Error('MINIMAX_INVALID_RESERVATIONS');}
+    const units=mmReservationUnits(items);
+    mmDemand(Array.isArray(required)&&required.length===units.length&&required.every((r,i)=>r?.sku===units[i].sku&&r.qty===units[i].qty),'MINIMAX_INVALID_RESERVATIONS');
+    for(const r of units)reserved[r.sku]+=r.qty;
+    if(e.draftStatus!==null){
+      mmDemand(['created','verified'].includes(e.draftStatus)&&Number.isSafeInteger(e.invoiceId)&&e.invoiceId>0&&!ids.has(e.invoiceId),'MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');ids.add(e.invoiceId);
+      let plan;try{plan=JSON.parse(e.planJson);}catch{throw Error('MINIMAX_INVALID_RESERVATIONS');}
+      mmDemand(await mmHash(e.planJson)===e.planHash&&plan.payload?.DocumentReference==='WEBSHOP:'+e.orderId&&Array.isArray(plan.payload.IssuedInvoiceRows),'MINIMAX_INVALID_RESERVATIONS');
+      const fromDraft=new Map();
+      for(const r of plan.payload.IssuedInvoiceRows){
+        if(r.ItemCode==='DOSTAVA')continue;
+        mmDemand(PHYSICAL_SKUS.includes(r.ItemCode)&&r.Item?.ID===MM_ITEMS[r.ItemCode][0]&&r.Warehouse?.ID===40999&&r.UnitOfMeasurement==='kom'&&Number.isSafeInteger(r.Quantity)&&r.Quantity>0&&r.Quantity<=200,'MINIMAX_INVALID_RESERVATIONS');
+        fromDraft.set(r.ItemCode,(fromDraft.get(r.ItemCode)||0)+r.Quantity);
+      }
+      mmDemand(fromDraft.size===units.length&&units.every(r=>fromDraft.get(r.sku)===r.qty),'MINIMAX_INVALID_RESERVATIONS');e.expected=plan.payload;
+    }else mmDemand(e.invoiceId===null&&e.planJson===null,'MINIMAX_INVALID_RESERVATIONS');
+  }
+  return {signature:JSON.stringify({hasJournal,...row}),entries,reserved,revision:row.revision};
+}
+async function mmCheckReservationDrafts(token,snapshot,observe){
+  for(const e of snapshot.entries.filter(e=>e.invoiceId!==null)){
+    await new Promise(resolve=>setTimeout(resolve,500));
+    await observe('drafts',async()=>{
+      const actual=await mmGet(token,`orgs/81179/issuedinvoices/${e.invoiceId}`);
+      // Issued is not proof of stock posting. Block rather than re-add or subtract twice.
+      mmDemand(actual?.Status==='O','MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');
+      try{mmVerify(actual,e.expected,e.invoiceId);}catch{throw Error('MINIMAX_RESERVATION_RECONCILIATION_REQUIRED');}
+    });
+  }
+}
+function mmReservationCalculation(rows,snapshot){
+  const products=rows.map(r=>{
+    const reserved=snapshot.reserved[r.sku],known=r.state==='reported'&&Number.isSafeInteger(r.quantity);
+    return {...r,reserved,simulationRemaining:known?Math.max(0,r.quantity-reserved):null,shortage:known?Math.max(0,reserved-r.quantity):null};
+  });
+  const bundles=Object.entries(BUNDLE_COMPONENTS).map(([sku,components])=>{
+    const parts=Object.entries(components).map(([part,units])=>({row:products.find(p=>p.sku===part),units}));
+    return {sku,name:PRODUCTS[sku].name,simulationRemaining:parts.every(({row})=>row.simulationRemaining!==null)?Math.min(...parts.map(({row,units})=>Math.floor(row.simulationRemaining/units))):null};
+  });
+  return {scope:'synthetic-reservation-preview',salesReady:false,quotaWrite:false,reservationCount:snapshot.entries.length,reservationRevision:snapshot.revision,rows:products,bundles};
+}
+
+// Observation only: no quota, reservation, invoice or schema writes on these routes.
+async function mmHandleStock(request,env,url,origin) {
+  if(!await mmStagingEnabled(env))return json({ok:false,error:'Not found'},404,origin);
+  if(request.method!=='GET')return json({ok:false,error:'Dozvoljeno je samo čitanje zaliha.'},405,origin,{Allow:'GET'});
+  if(url.search)return json({ok:false,error:'Skladište i artikli su unapred određeni za ovu probu.'},400,origin);
+  // Diagnostics are fixed labels/status numbers only, never provider bodies or headers.
+  const observe=async(step,operation,sku=null)=>{
+    try{return await operation();}
+    catch(error){error.stockStep=step;error.stockSku=sku;throw error;}
+  };
+  const calculate=url.pathname==='/admin/minimax-availability';
+  try {
+    const snapshot=calculate?await observe('reservations',()=>mmReservationSnapshot(env.DB)):null;
+    const token=await observe('authentication',()=>mmLogin(env));
+    await observe('organisation',async()=>{
+      const orgs=await mmGet(token,'currentuser/orgs?CurrentPage=1&PageSize=100');
+      mmDemand(orgs.Rows?.some(r=>r.Organisation?.ID===81179 && r.APIAccess==='D'),'MINIMAX_ORG_ACCESS_REQUIRED');
+    });
+    const startedAt=new Date().toISOString();
+    if(calculate)await mmCheckReservationDrafts(token,snapshot,observe);
+    // Item filters keep the pilot bounded regardless of the size of the full catalogue.
+    // Mode=1 also requests items with historical stock. Missing rows are NOT zero.
+    const rows=[];
+    for(const [sku,[id,,name]] of Object.entries(MM_ITEMS).filter(([sku])=>sku!=='DOSTAVA')){
+      // One request at a time, with a gap after the preceding organisation/item read.
+      // Stop at the first failure; do not retry authentication or fan out more reads.
+      await new Promise(resolve=>setTimeout(resolve,500));
+      rows.push(await observe('stock',async()=>{
+        const data=await mmGet(token,`orgs/81179/stocks?WarehouseId=40999&ItemID=${id}&Mode=1&CurrentPage=1&PageSize=100`);
+        mmDemand(Array.isArray(data.Rows) && data.CurrentPageNumber===1 && Number.isSafeInteger(data.PageSize) && data.PageSize>0 &&
+          data.PageSize<=100 && data.TotalRows===data.Rows.length && data.Rows.length<=1 &&
+          (data.ValidationMessages===undefined || (Array.isArray(data.ValidationMessages)&&data.ValidationMessages.length===0)),'MINIMAX_INVALID_STOCK');
+        const row=data.Rows[0];
+        if(!row)return {sku,itemId:id,name,quantity:null,state:'unreported'};
+        mmDemand(row.Item?.ID===id && row.ItemCode===sku && row.UnitOfMeasurement==='kom' && (row.BatchNumber==null||row.BatchNumber===''),'MINIMAX_INVALID_STOCK');
+        mmDemand(row.Quantity===null || (Number.isSafeInteger(row.Quantity)&&Math.abs(row.Quantity)<=1000000000),'MINIMAX_INVALID_STOCK');
+        return {sku,itemId:id,name,quantity:row.Quantity,state:row.Quantity===null?'unreported':'reported'};
+      },sku));
+    }
+    if(calculate){
+      await mmCheckReservationDrafts(token,snapshot,observe);
+      const after=await observe('reservations',()=>mmReservationSnapshot(env.DB));
+      await observe('reservations',async()=>mmDemand(snapshot.signature===after.signature,'MINIMAX_RESERVATIONS_CHANGED'));
+    }
+    return json({ok:true,readOnly:true,organisationId:81179,warehouseId:40999,warehouseName:'VP skladište',startedAt,readAt:new Date().toISOString(),rows,...(calculate?mmReservationCalculation(rows,snapshot):{})},200,origin);
+  }catch(error){
+    const codes=new Set(['MINIMAX_SECRETS_REQUIRED','MINIMAX_HTTP_ERROR','MINIMAX_INVALID_RESPONSE','MINIMAX_TIMEOUT','MINIMAX_NETWORK_ERROR','MINIMAX_INVALID_AUTH','MINIMAX_ORG_ACCESS_REQUIRED','MINIMAX_INVALID_STOCK','MINIMAX_INVALID_RESERVATIONS','MINIMAX_RESERVATION_RECONCILIATION_REQUIRED','MINIMAX_RESERVATIONS_CHANGED']);
+    const code=codes.has(error.message)?error.message:'MINIMAX_STOCK_UNAVAILABLE';
+    const step=['authentication','organisation','stock','reservations','drafts'].includes(error.stockStep)?error.stockStep:'unknown';
+    const sku=Object.hasOwn(MM_ITEMS,error.stockSku||'')&&error.stockSku!=='DOSTAVA'?error.stockSku:null;
+    const upstreamStatus=Number.isInteger(error.upstreamStatus)&&error.upstreamStatus>=300&&error.upstreamStatus<=599?error.upstreamStatus:null;
+    return json({ok:false,code,step,sku,upstreamStatus,error:calculate?'Probni obračun rezervacija nije potvrđen. Probne kvote nisu promenjene.':'Stanje zaliha nije pouzdano učitano iz Minimax-a. Probne kvote nisu promenjene.'},code.startsWith('MINIMAX_RESERVATION')||code==='MINIMAX_INVALID_RESERVATIONS'?409:502,origin);
+  }
+}
+function mmLocation(value) {
+  try {
+    const url=new URL(value,MM_API),match=url.pathname.match(/^\/(?:RS\/API\/)?api\/orgs\/81179\/issuedinvoices\/([1-9]\d*)\/?$/i),id=Number(match?.[1]);
+    const params=[...url.searchParams.entries()];
+    mmDemand(url.origin==='https://moj.minimax.rs' && !url.username && !url.password && !url.hash && Number.isSafeInteger(id) && id>0 &&
+      (!params.length || (params.length===1 && params[0][0]==='id' && params[0][1]===String(id))),'MINIMAX_LOCATION_UNCERTAIN');return id;
+  }catch {throw new Error('MINIMAX_LOCATION_UNCERTAIN');}
+}
+function mmVerify(actual,expected,id) {
+  mmDemand(actual?.IssuedInvoiceId===id && actual.Status==='O' && !(actual.InvoiceNumber>0),'MINIMAX_NOT_MATCHING_DRAFT');
+  for(const key of ['Customer','DocumentNumbering','Employee','Currency','AddresseeCountry'])mmDemand(actual[key]?.ID===expected[key].ID,'MINIMAX_HEADER_MISMATCH');
+  for(const key of ['DocumentReference','PricesOnInvoice','InvoiceType','Rabate','ExchangeRate','AddresseeName','AddresseeAddress','AddresseePostalCode','AddresseeCity','DescriptionAbove'])mmDemand(actual[key]===expected[key],'MINIMAX_HEADER_MISMATCH');
+  for(const key of ['DateIssued','DateTransaction','DateTransactionFrom','DateDue'])mmDemand(typeof actual[key]==='string' && actual[key].slice(0,10)===expected[key],'MINIMAX_DATE_MISMATCH');
+  mmDemand(Array.isArray(actual.IssuedInvoiceRows) && actual.IssuedInvoiceRows.length===expected.IssuedInvoiceRows.length,'MINIMAX_ROWS_MISMATCH');
+  for(const row of expected.IssuedInvoiceRows) {
+    const matches=actual.IssuedInvoiceRows.filter(r=>r.RowNumber===row.RowNumber);mmDemand(matches.length===1,'MINIMAX_ROWS_MISMATCH');const r=matches[0];
+    mmDemand(r.Item?.ID===row.Item.ID && r.ItemCode===row.ItemCode && r.Quantity===row.Quantity && r.UnitOfMeasurement==='kom' && (r.Description||'')===(row.Description||''),'MINIMAX_ROWS_MISMATCH');
+    mmDemand(mmCents(r.Value)===mmCents(row.Value) && mmCents(r.PriceWithVAT)===mmCents(row.PriceWithVAT) && typeof r.Price==='number' && Math.abs(r.Price-row.Price)<=0.000001,'MINIMAX_AMOUNT_MISMATCH');
+    mmDemand(r.Discount===0 && r.DiscountPercent===0 && r.VATPercent===20 && r.VatRate?.ID===4 && r.VatAccountingType==='3.2' && (r.Warehouse?.ID||null)===(row.Warehouse?.ID||null) && r.AdditionalWarehouse==null,'MINIMAX_TAX_OR_WAREHOUSE_MISMATCH');
+  }
+  const p=actual.IssuedInvoicePaymentMethods;
+  mmDemand(Array.isArray(p) && p.length===1 && p[0].PaymentMethod?.ID===622053 && p[0].AlreadyPaid==='N' && mmCents(p[0].Amount)===mmCents(expected.IssuedInvoicePaymentMethods[0].Amount) && mmCents(p[0].AmountInDomesticCurrency)===mmCents(p[0].Amount),'MINIMAX_PAYMENT_MISMATCH');
+}
+async function mmHandleDraft(request,env,order,origin) {
+  if(!await mmStagingEnabled(env))return json({ok:false,error:'Minimax probni prenos nije uključen.'},404,origin);
+  if(!['GET','POST'].includes(request.method))return json({ok:false,error:'Method not allowed'},405,origin);
+  await mmEnsureSchema(env.DB);
+  let job=await env.DB.prepare('SELECT * FROM minimax_drafts WHERE order_id=?').bind(order.id).first();
+  try {
+    const source=mmSource(order);
+    const plan=job?JSON.parse(job.payload_json):{...mmBuildPlan(order),source};
+    const hash=job?.preview_hash||await mmHash(JSON.stringify(plan));
+    const changed=plan.source!==source;
+    if(request.method==='GET')return json({...mmView(job,plan,hash,changed),ready:mmCredentialsReady(env)},200,origin);
+    const body=await mmReadBody(request);
+    mmDemand(body && ['create','verify'].includes(body.action) && body.confirm===true,'CONFIRMATION_REQUIRED');
+    if(body.action==='create' && job)return json({...mmView(job,plan,hash,changed),ready:mmCredentialsReady(env)},200,origin);
+    mmDemand(!changed,'ORDER_CHANGED_AFTER_TRANSFER');
+    if(body.action==='create')mmDemand(body.previewHash===hash,'PREVIEW_EXPIRED');
+    else mmDemand(job,'NO_PREVIOUS_ATTEMPT');
+    const token=await mmLogin(env);
+    if(body.action==='create') {
+      await mmPreflight(token,plan.payload);
+      const now=new Date().toISOString(),revision=order.operationsRevision;
+      const result=await env.DB.batch([
+        env.DB.prepare(`INSERT OR IGNORE INTO minimax_drafts (order_id,operation_key,status,payload_json,preview_hash,created_at,updated_at)
+          SELECT id,?,'sending',?,?,?,? FROM orders WHERE id=? AND status=? AND updated_at=? AND items_json=? AND goods_total=? AND shipping=? AND total=? AND payment=?
+          AND (SELECT revision FROM order_operations WHERE order_id=orders.id)=?`).bind(`minimax:draft:${order.id}`,JSON.stringify(plan),hash,now,now,order.id,order.status,order.updatedAt,JSON.stringify(order.items),order.goodsTotal,order.shipping,order.total,order.payment,revision),
+        env.DB.prepare(`INSERT INTO order_events (order_id,event_type,note,created_at) SELECT ?,'minimax_draft_attempt','Probni prenos nacrta je zabeležen.',? WHERE changes()=1`).bind(order.id,now)
+      ]);
+      job=await env.DB.prepare('SELECT * FROM minimax_drafts WHERE order_id=?').bind(order.id).first();
+      if(!result[0].meta.changes){mmDemand(job,'ORDER_CHANGED_RELOAD_PREVIEW');return json(mmView(job,JSON.parse(job.payload_json),job.preview_hash),200,origin);}
+      // Once sending is durable, every outcome (including HTTP errors) blocks a
+      // second POST. The only continuation is reading an existing draft by ID.
+      try {
+        const res=await mmRequest(MM_API+'orgs/81179/issuedinvoices',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(plan.payload)});
+        mmDemand(res.status===201,'MINIMAX_CREATE_UNCERTAIN');const id=mmLocation(res.headers.get('Location'));
+        await env.DB.prepare("UPDATE minimax_drafts SET external_id=?,status='created',updated_at=? WHERE order_id=?").bind(id,new Date().toISOString(),order.id).run();
+        job.external_id=id;
+      }catch(error){await env.DB.prepare("UPDATE minimax_drafts SET status='attention',last_error=?,updated_at=? WHERE order_id=?").bind(error.message,new Date().toISOString(),order.id).run();throw error;}
+    }
+    const id=job.external_id||Number(body.invoiceId);
+    mmDemand(Number.isSafeInteger(id) && id>0,'EXISTING_INVOICE_ID_REQUIRED');
+    const actual=await mmGet(token,`orgs/81179/issuedinvoices/${id}`);mmVerify(actual,plan.payload,id);
+    const now=new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE minimax_drafts SET status='verified',external_id=?,last_error=NULL,updated_at=? WHERE order_id=?").bind(id,now,order.id),
+      env.DB.prepare("INSERT INTO order_events (order_id,event_type,note,created_at) VALUES (?,'minimax_draft_verified',?,?)").bind(order.id,`Proveren probni nacrt ${id}; nije izdat.`,now)
+    ]);
+    return json(mmView({...job,status:'verified',external_id:id,last_error:null},plan,hash),200,origin);
+  }catch(error) {
+    // Errors are controlled codes only; never return provider text or secrets.
+    return json({ok:false,error:'Minimax: '+(/^[A-Z_]{3,70}$/.test(error.message)?error.message:'CHECK_REQUIRED')+'. Ne ponavljajte prenos; osvežite pregled i proverite postojeći nacrt.'},409,origin);
+  }
+}
+
+// Operator-only synthetic admission into the same atomic quota/order service as
+// checkout. This is not a public checkout endpoint or a bypass in /order.
+const MM_PROBE_CARTS = {
+  STANDARD:[{sku:'10086',qty:1},{sku:'10012',qty:1},{sku:'10306',qty:1},{sku:'10307',qty:1},{sku:'10240',qty:1}],
+  PAKET:[{sku:'PKT-PROBA',qty:2},{sku:'10240',qty:1}],
+  BESPLATNA:[{sku:'PKT-KOMPLET',qty:2}],
+  GURMAN:[{sku:'PKT-GURMAN',qty:2}]
+};
+function mmProbeOrder(scenario) {
+  const id='AT-MMTEST-FLOW-'+scenario;
+  const validation=validateOrder({submissionId:id,customer:{firstName:'API proba',lastName:scenario,email:'minimax-test@example.invalid',phone:'0600000000'},
+    delivery:{method:'Dostava na adresu',address:'Test 1',postalCode:'21208',city:'Sremska Kamenica',note:'Sintetička proba; ne slati.'},items:MM_PROBE_CARTS[scenario]});
+  mmDemand(validation.ok,'INVALID_PROBE_CART');
+  return {...buildOrder(validation.data),id,payment:'TEST_BANK_TRANSFER'};
+}
+async function mmHandleProbeOrder(request,env,url,origin) {
+  if(!await mmStagingEnabled(env))return json({ok:false,error:'Not found'},404,origin);
+  const base='/admin/probe-orders';
+  if(url.pathname===base && request.method==='GET')return json({ok:true,scenarios:Object.keys(MM_PROBE_CARTS).map(scenario=>{
+    const o=mmProbeOrder(scenario);return {scenario,id:o.id,items:o.items,goodsTotal:o.goodsTotal,shipping:o.shipping,total:o.total};
+  })},200,origin);
+  if(request.method!=='POST')return json({ok:false,error:'Method not allowed'},405,origin);
+  const fail=(error,status=400)=>json({ok:false,error},status,origin);
+  let body;try{body=await mmReadBody(request);}catch{return fail('Neispravan probni zahtev.');}
+  if(!body || body.confirm!==true)return fail('Potvrdite probnu radnju.');
+  if(url.pathname===base) {
+    if(Object.keys(body).some(k=>!['scenario','confirm'].includes(k))||typeof body.scenario!=='string'||!Object.hasOwn(MM_PROBE_CARTS,body.scenario))return fail('Izaberite ponuđenu sintetičku probu.');
+    try {
+      const accepted=await acceptOrder(env.DB,mmProbeOrder(body.scenario));
+      if(accepted.rejection)return json({ok:false,...accepted.rejection.body},accepted.rejection.status,origin);
+      return json({ok:true,duplicate:accepted.duplicate,order:accepted.order},accepted.duplicate?200:201,origin);
+    }catch{return intakeError(origin);}
+  }
+  const match=url.pathname.match(/^\/admin\/probe-orders\/(AT-MMTEST-FLOW-(?:STANDARD|PAKET|BESPLATNA|GURMAN))\/confirm$/);
+  if(!match || Object.keys(body).some(k=>k!=='confirm'))return fail('Probna radnja nije dozvoljena.');
+  const order=await getOrderById(env.DB,match[1]);
+  if(!order)return fail('Prvo prihvatite probnu porudžbinu.',404);
+  if(order.customer.email!=='minimax-test@example.invalid'||order.payment!=='TEST_BANK_TRANSFER')return fail('Dozvoljeni su samo probni podaci.',409);
+  if(order.status==='confirmed')return json({ok:true,duplicate:true,order},200,origin);
+  if(order.status!=='new')return fail('Probna porudžbina nije nova.',409);
+  const now=new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE orders SET status='confirmed',confirmed_at=?,updated_at=? WHERE id=? AND status='new'").bind(now,now,order.id),
+    env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?,'probe_confirmed','Potvrđena sintetička porudžbina; bez slanja poruka.',? WHERE changes()=1").bind(order.id,now)
+  ]);
+  return json({ok:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
+}
+
+// Manual first-sale evidence in the standalone Worker,
+// not an ESIR adapter: no invoice issuance or authenticity verification here.
+function firstSaleEnabled(env) { return env?.FIRST_SALE_MODE === 'manual-minimax'; }
+async function ensureFiscalSchema(db) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS fiscal_cas_assert(ok INTEGER CHECK(ok=1))').run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS fiscal_documents (
+    pfr_key TEXT PRIMARY KEY, pfr_number TEXT NOT NULL, order_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('sale','refund')), original_key TEXT,
+    operation_id TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
+    issued_at TEXT NOT NULL, gross_cents INTEGER NOT NULL,
+    delivery_mode TEXT NOT NULL CHECK(delivery_mode IN ('panel','minimax')),
+    delivered_at TEXT, recipient TEXT NOT NULL, notification_key TEXT,
+    pdf_key TEXT, pdf_filename TEXT, pdf_hash TEXT, reason TEXT NOT NULL,
+    source_items TEXT NOT NULL, source_email TEXT NOT NULL, source_payment TEXT NOT NULL,
+    source_goods REAL NOT NULL, source_shipping REAL NOT NULL, source_total REAL NOT NULL,
+    created_at TEXT NOT NULL, UNIQUE(order_id,kind)
+  )`).run();
+}
+function fiscalPfr(value) {
+  if (typeof value !== 'string' || value.length > 160) return null;
+  const number=value.trim();
+  // PFR invoice number, not the commercial invoice's local sequence number.
+  return /^[A-Za-z0-9]{8}-[A-Za-z0-9]{8}-[1-9]\d{0,21}$/.test(number) ? number : null;
+}
+function fiscalDate(value) {
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value))return null;
+  const n=Date.parse(value);return Number.isFinite(n)&&new Date(n).toISOString()===value&&n<=Date.now()+300000?value:null;
+}
+function fiscalGuard() {
+  return `EXISTS(SELECT 1 FROM fiscal_documents f WHERE f.order_id=orders.id AND f.kind='sale'
+    AND f.source_items=orders.items_json AND f.source_email=orders.customer_email AND f.source_payment=orders.payment
+    AND f.source_goods=orders.goods_total AND f.source_shipping=orders.shipping AND f.source_total=orders.total
+    AND (f.delivery_mode='minimax' OR EXISTS(SELECT 1 FROM notification_outbox n WHERE n.operation_key=f.notification_key AND n.status='sent')))
+    AND NOT EXISTS(SELECT 1 FROM fiscal_documents r WHERE r.order_id=orders.id AND r.kind='refund')
+    AND COALESCE((SELECT json_extract(data_json,'$.paymentStatus') FROM order_operations WHERE order_id=orders.id),'unpaid')<>'refunded'`;
+}
+function firstSaleInvoiceRows(order) {
+  mmReservationUnits(order.items);const rows=[];
+  const add=(sku,qty,price)=>{mmDemand(Object.hasOwn(MM_ITEMS,sku)&&Number.isSafeInteger(qty)&&qty>0&&qty<=10000,'INVALID_FISCAL_PREPARATION');rows.push({sku,name:MM_ITEMS[sku][2],qty,price:price/100,value:price*qty/100});};
+  let goods=0;
+  for(const item of order.items){
+    const unit=mmCents(item.unitPrice);mmDemand(unit>0&&unit<=2000000&&mmCents(item.lineTotal)===unit*item.qty,'INVALID_FISCAL_PREPARATION');goods+=unit*item.qty;
+    if(Object.hasOwn(BUNDLE_COMPONENTS,item.sku)){
+      for(const c of mmAllocate(unit,item.bundleComponents)){
+        const price=Math.floor(c.amount/c.units),extra=c.amount%c.units;
+        if(c.units>extra)add(c.sku,(c.units-extra)*item.qty,price);
+        if(extra)add(c.sku,extra*item.qty,price+1);
+      }
+    }else add(item.sku,item.qty,unit);
+  }
+  const shipping=mmCents(order.shipping);mmDemand(goods===mmCents(order.goodsTotal)&&[0,42000].includes(shipping)&&goods+shipping===mmCents(order.total),'INVALID_FISCAL_PREPARATION');
+  if(shipping)add('DOSTAVA',1,shipping);
+  mmDemand(rows.reduce((sum,r)=>sum+mmCents(r.value),0)===mmCents(order.total),'INVALID_FISCAL_PREPARATION');return rows;
+}
+async function fiscalView(db,order) {
+  await ensureFiscalSchema(db);
+  const rows=await db.prepare(`SELECT f.*,n.status email_status FROM fiscal_documents f
+    LEFT JOIN notification_outbox n ON n.operation_key=f.notification_key WHERE f.order_id=? ORDER BY f.kind`).bind(order.id).all();
+  const view={required:true,sale:null,refund:null,ready:false,invoiceRows:[],preparationError:null};
+  try{view.invoiceRows=firstSaleInvoiceRows(order);}catch{view.preparationError='Sačuvane stavke, sastav paketa ili iznosi nisu usklađeni. Potrebna je provera porudžbine.';}
+  for(const f of rows.results||[]) view[f.kind]={pfrNumber:f.pfr_number,issuedAt:f.issued_at,amount:f.gross_cents/100,
+    deliveryMode:f.delivery_mode,deliveryStatus:f.delivery_mode==='minimax'?'manually_recorded':f.email_status==='sent'?'accepted':f.email_status||'missing',
+    deliveredAt:f.delivered_at,recipient:f.recipient,pdfFilename:f.pdf_filename||null,
+    evidence:'operator_attestation',originalPfr:f.original_key};
+  const ready=await db.prepare(`SELECT id FROM orders WHERE id=? AND ${fiscalGuard()}`).bind(order.id).first();
+  view.ready=Boolean(ready)&&!view.preparationError;return view;
+}
+async function fiscalReadyError(env,order) {
+  if(!firstSaleEnabled(env))return null;
+  const state=await fiscalView(env.DB,order);
+  return state.ready?null:state.refund?'Evidentirana je refundacija. Pošiljka ne može biti poslata.':
+    'Prvo povežite izdat fiskalni račun i potvrdite slanje kupcu. Proverite iznos, podatke porudžbine i status emaila.';
+}
+async function fiscalForm(request) {
+  const type=request.headers.get('Content-Type')||'';
+  if(!type.startsWith('multipart/form-data;')||!request.body)throw Error('INVALID_FISCAL_FORM');
+  const reader=request.body.getReader(),parts=[];let size=0;
+  try {while(true){const p=await reader.read();if(p.done)break;size+=p.value.byteLength;if(size>5*1024*1024+65536)throw Error('FISCAL_FORM_TOO_LARGE');parts.push(p.value);}}
+  finally {await reader.cancel().catch(()=>{});}
+  const bytes=new Uint8Array(size);let offset=0;for(const p of parts){bytes.set(p,offset);offset+=p.byteLength;}
+  return new Response(bytes,{headers:{'Content-Type':type}}).formData();
+}
+async function handleFiscal(request,env,order,origin) {
+  const fail=(error,status=400,code='INVALID_FISCAL_EVIDENCE')=>json({ok:false,error,code},status,origin);
+  if(!firstSaleEnabled(env))return fail('Fiskalna evidencija nije uključena.',404);
+  if(order.fiscalControl?.preparationError)return fail(order.fiscalControl.preparationError,409);
+  if(request.method!=='POST')return fail('Dozvoljen je samo upis fiskalne evidencije.',405);
+  let form;try{form=await fiscalForm(request);}catch(e){return fail('Očekivan je fiskalni obrazac sa PDF-om do 5 MB.',e.message==='FISCAL_FORM_TOO_LARGE'?413:400);}
+  const allowed=['operationId','revision','kind','pfrNumber','originalPfr','issuedAt','amount','deliveryMode','deliveredAt','recipient','reason','confirmed','receipt'];
+  if([...form.keys()].some(k=>!allowed.includes(k)||form.getAll(k).length!==1))return fail('Nepoznata ili ponovljena polja obrasca.');
+  const operationId=form.get('operationId'),kind=form.get('kind'),pfr=fiscalPfr(form.get('pfrNumber')),
+    issuedAt=fiscalDate(form.get('issuedAt')),mode=form.get('deliveryMode'),recipient=form.get('recipient'),reason=form.get('reason');
+  const amount=form.get('amount');let cents;
+  try{if(typeof amount!=='string'||!/^\d{1,8}(?:\.\d{1,2})?$/.test(amount))throw Error();cents=mmCents(Number(amount));}catch{return fail('Unesite tačan ukupan iznos sa fiskalnog računa.');}
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(operationId||'')||
+    !['sale','refund'].includes(kind)||!pfr||!issuedAt||!['panel','minimax'].includes(mode)||form.get('confirmed')!=='yes'||
+    typeof reason!=='string'||reason.trim().length<5||reason.length>500||recipient!==order.customer.email||cents!==mmCents(order.total))
+    return fail('Proverite PFR broj, datum, ukupan iznos, email kupca i potvrdu provere originalnog računa.');
+  const deliveredAt=mode==='minimax'?fiscalDate(form.get('deliveredAt')):null;
+  if(mode==='minimax'&&(!deliveredAt||deliveredAt<issuedAt))return fail('Unesite stvarno vreme slanja računa iz Minimax-a, posle izdavanja.');
+  if(mode==='panel'&&!env.RESEND_API_KEY)return fail('Email servis nije spreman.',503);
+  const pfrKey=pfr.toUpperCase();
+  const originalNumber=kind==='refund'?fiscalPfr(form.get('originalPfr')):null;
+  const original=originalNumber?.toUpperCase()||null;
+  if(kind==='sale'&&form.get('originalPfr'))return fail('Prodajni račun ne koristi referencu refundacije.');
+  await ensureFiscalSchema(env.DB);
+  const sale=await env.DB.prepare("SELECT * FROM fiscal_documents WHERE order_id=? AND kind='sale'").bind(order.id).first();
+  if(kind==='refund'&&(!sale||original!==sale.pfr_key||pfrKey===original||issuedAt<sale.issued_at))return fail('Puna refundacija mora se pozvati na originalni PFR broj prodaje.');
+  const file=form.get('receipt');let buffer=null,pdfHash=null,filename=null;
+  if(file&&typeof file.arrayBuffer==='function'&&file.size>0){
+    if(file.size>5*1024*1024||!file.name.toLowerCase().endsWith('.pdf')||(file.type&&file.type!=='application/pdf'))return fail('Priložite originalni PDF do 5 MB.',413);
+    buffer=await file.arrayBuffer();const b=new Uint8Array(buffer);
+    if(!(b[0]===37&&b[1]===80&&b[2]===68&&b[3]===70))return fail('Dokument nije PDF.');
+    pdfHash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(n=>n.toString(16).padStart(2,'0')).join('');filename=safePdfFilename(file.name);
+  }
+  if(mode==='panel'&&!buffer)return fail('Za slanje iz panela potreban je originalni fiskalni PDF.');
+  const canonical=JSON.stringify({orderId:order.id,kind,pfr,original,issuedAt,cents,mode,deliveredAt,recipient,reason:reason.trim(),pdfHash});
+  const requestHash=await availabilityHash(canonical);
+  const old=await env.DB.prepare('SELECT * FROM fiscal_documents WHERE operation_id=?').bind(operationId).first();
+  if(old)return old.order_id===order.id&&old.request_hash===requestHash?notificationResponse(env,order.id,origin,true):fail('ID zahteva je već iskorišćen za druge podatke.',409,'FISCAL_OPERATION_CONFLICT');
+  if(!['confirmed',...(kind==='refund'?['shipped']:[])].includes(order.status))return fail('Prvo potvrdite porudžbinu; račun se ne evidentira za odbijenu ili otkazanu porudžbinu.',409);
+  if(String(order.operationsRevision)!==form.get('revision'))return fail('Porudžbina je promenjena. Osvežite prikaz.',409,'STALE_FISCAL_ORDER');
+  if(await env.DB.prepare("SELECT order_id FROM order_operations WHERE order_id<>? AND upper(replace(json_extract(data_json,'$.fiscalNumber'),' ',''))=?").bind(order.id,pfrKey).first())return fail('PFR broj je već u istorijskoj operativnoj evidenciji druge porudžbine.',409,'DUPLICATE_FISCAL_NUMBER');
+  if(await env.DB.prepare('SELECT order_id FROM fiscal_documents WHERE pfr_key=? OR (order_id=? AND kind=?)').bind(pfrKey,order.id,kind).first())return fail('PFR broj ili fiskalni dokument je već povezan. Ne izdajte novi račun; proverite postojeću evidenciju.',409,'DUPLICATE_FISCAL_NUMBER');
+  const raw=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(order.id).first();
+  const current=rowToOrder(raw);
+  if(current.status!==order.status||JSON.stringify(current.items)!==JSON.stringify(order.items)||current.customer.email!==recipient||current.payment!==order.payment||current.total!==order.total||current.shipping!==order.shipping||current.goodsTotal!==order.goodsTotal)return fail('Porudžbina je promenjena. Osvežite prikaz.',409,'STALE_FISCAL_ORDER');
+  if(kind==='refund'&&(sale.source_items!==raw.items_json||sale.source_email!==recipient||sale.source_payment!==order.payment||sale.source_total!==order.total||sale.source_goods!==order.goodsTotal||sale.source_shipping!==order.shipping))return fail('Originalna fiskalizovana porudžbina je izmenjena. Potrebna je ručna provera.',409);
+  const now=new Date().toISOString(),key=buffer?`fiscal/${order.id}/${crypto.randomUUID()}-${filename}`:null,
+    notificationKey=mode==='panel'?`fiscal-mail/${operationId}`:null;
+  if(buffer){if(!env.RECEIPTS)return fail('Skladište PDF dokumenata nije povezano.',503);await env.RECEIPTS.put(key,buffer,{httpMetadata:{contentType:'application/pdf'},customMetadata:{orderId:order.id}});}
+  const values=[pfrKey,pfr,order.id,kind,original,operationId,requestHash,issuedAt,cents,mode,deliveredAt,recipient,notificationKey,key,filename,pdfHash,reason.trim(),raw.items_json,recipient,order.payment,order.goodsTotal,order.shipping,order.total,now];
+  const statements=[env.DB.prepare(`INSERT INTO fiscal_documents VALUES(${values.map(()=>'?').join(',')})`).bind(...values)];
+  // A failed source/revision CAS aborts the entire batch, including the unique claim.
+  statements.push(env.DB.prepare(`UPDATE orders SET updated_at=?,receipt_key=CASE WHEN ?='sale' THEN ? ELSE receipt_key END,
+    receipt_filename=CASE WHEN ?='sale' THEN ? ELSE receipt_filename END WHERE id=? AND status=? AND payment=? AND customer_email=?
+    AND items_json=? AND goods_total=? AND shipping=? AND total=? AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=orders.id AND revision=?)
+    AND NOT EXISTS(SELECT 1 FROM order_operations legacy WHERE legacy.order_id<>orders.id AND upper(replace(json_extract(legacy.data_json,'$.fiscalNumber'),' ',''))=?)`)
+    .bind(now,kind,key,kind,filename,order.id,order.status,order.payment,recipient,raw.items_json,order.goodsTotal,order.shipping,order.total,order.operationsRevision,pfrKey));
+  // CHECK failure on a transient helper insert forces D1 batch rollback on CAS loss.
+  statements.push(env.DB.prepare(`INSERT INTO fiscal_cas_assert(ok) SELECT changes()`));
+  statements.push(env.DB.prepare('DELETE FROM fiscal_cas_assert'));
+  statements.push(env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES(?,'fiscal_recorded',?,?)")
+    .bind(order.id,`Administrator · Ručno provereno: ${kind==='sale'?'prodaja':'puna refundacija'} ${pfr}; ${cents/100} RSD; ${mode==='minimax'?'slanje iz Minimax-a evidentirano':'PDF sačuvan za slanje'}; razlog: ${reason.trim()}`,now));
+  if(mode==='panel'){
+    const payload={from:FROM_EMAIL,to:[recipient],reply_to:BUSINESS_EMAIL,subject:`${kind==='sale'?'Fiskalni račun':'Fiskalna refundacija'} za porudžbinu ${order.id}`,
+      html:emailShell(`<h1>${kind==='sale'?'Fiskalni račun':'Puna refundacija'}</h1><p>U prilogu je fiskalni dokument za porudžbinu ${escapeHtml(order.id)}. PFR broj: ${escapeHtml(pfr)}.</p>`),
+      attachments:[{filename,r2Key:key}],tags:[{name:'category',value:'fiscal_document'},{name:'order_id',value:order.id}]};
+    statements.push(env.DB.prepare('INSERT INTO notification_outbox(operation_key,order_id,payload_json,metadata_json,created_at) VALUES(?,?,?,?,?)').bind(notificationKey,order.id,JSON.stringify(payload),JSON.stringify({fiscalKind:kind}),now));
+  }
+  try{await env.DB.batch(statements);}
+  catch(e){if(key)await env.RECEIPTS.delete(key).catch(()=>{});const duplicate=await env.DB.prepare('SELECT operation_id,request_hash FROM fiscal_documents WHERE pfr_key=? OR (order_id=? AND kind=?)').bind(pfrKey,order.id,kind).first();
+    if(duplicate?.operation_id===operationId&&duplicate.request_hash===requestHash)return notificationResponse(env,order.id,origin,true);
+    return fail(duplicate?'PFR broj ili dokument je već povezan.':'Podaci su promenjeni ili evidencija nije sačuvana. Osvežite prikaz.',409,duplicate?'DUPLICATE_FISCAL_NUMBER':'FISCAL_SAVE_CONFLICT');}
+  return notificationResponse(env,order.id,origin);
 }

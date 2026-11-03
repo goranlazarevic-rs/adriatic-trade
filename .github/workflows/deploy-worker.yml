@@ -14,12 +14,30 @@ on:
       - "assets/js/inquiry-forms.js"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
+      - "assets/js/admin-probe.js"
+      - "assets/js/admin-stock.js"
+      - "docs/MINIMAX-STOCK-PREVIEW.md"
+      - "docs/MINIMAX-RESERVATIONS-PREVIEW.md"
+      - "docs/MINIMAX-RESERVATION-HANDOFF.md"
+      - "docs/FIRST-SALE-RUNBOOK.md"
+      - "LAUNCH-CHECKLIST.md"
+      - "docs/MINIMAX-INTEGRATED-PROBA.md"
+      - "assets/js/admin-availability.js"
+      - "assets/css/admin.css"
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "tools/minimax-draft/**"
+      - "tools/minimax-reconciliation/**"
+      - "tools/minimax-staging/**"
+      - "worker/minimax-staging.js"
+      - "scripts/check-minimax-staging.sh"
+      - "docs/MINIMAX-ADMIN-PROBA.md"
+      - "docs/MINIMAX-DRAFT-PROBA.md"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "cloudflare-d1-checkout-availability-v1.sql"
+      - "cloudflare-d1-admin-availability-v1.sql"
       - "admin.html"
       - "checkout.html"
       - "dostava-placanje.html"
@@ -37,12 +55,30 @@ on:
       - "assets/js/inquiry-forms.js"
       - "worker/adriatic-trade-worker-v4.5.0.js"
       - "assets/js/admin.js"
+      - "assets/js/admin-probe.js"
+      - "assets/js/admin-stock.js"
+      - "docs/MINIMAX-STOCK-PREVIEW.md"
+      - "docs/MINIMAX-RESERVATIONS-PREVIEW.md"
+      - "docs/MINIMAX-RESERVATION-HANDOFF.md"
+      - "docs/FIRST-SALE-RUNBOOK.md"
+      - "LAUNCH-CHECKLIST.md"
+      - "docs/MINIMAX-INTEGRATED-PROBA.md"
+      - "assets/js/admin-availability.js"
+      - "assets/css/admin.css"
       - "assets/js/main.js"
       - ".github/workflows/deploy-worker.yml"
       - "tests/**"
+      - "tools/minimax-draft/**"
+      - "tools/minimax-reconciliation/**"
+      - "tools/minimax-staging/**"
+      - "worker/minimax-staging.js"
+      - "scripts/check-minimax-staging.sh"
+      - "docs/MINIMAX-ADMIN-PROBA.md"
+      - "docs/MINIMAX-DRAFT-PROBA.md"
       - "scripts/check-worker-release.sh"
       - "cloudflare-d1-schema-v1.sql"
       - "cloudflare-d1-checkout-availability-v1.sql"
+      - "cloudflare-d1-admin-availability-v1.sql"
       - "admin.html"
       - "checkout.html"
       - "dostava-placanje.html"
@@ -55,6 +91,16 @@ on:
         type: boolean
         required: true
         default: false
+      deploy_minimax_staging:
+        description: "Deploy isolated Minimax admin pilot from an approved development branch"
+        type: boolean
+        required: false
+        default: false
+      approved_staging_sha:
+        description: "Full 40-character development commit SHA approved for the isolated pilot"
+        type: string
+        required: false
+        default: ""
       approved_sha:
         description: "Full 40-character main commit SHA approved for production; blank for validation only"
         type: string
@@ -78,6 +124,13 @@ jobs:
           APPROVED_SHA: ${{ inputs.approved_sha }}
         run: bash scripts/check-worker-release.sh
 
+      - name: Validate isolated staging request
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_minimax_staging == true
+        env:
+          APPROVED_STAGING_SHA: ${{ inputs.approved_staging_sha }}
+          DEPLOY_PRODUCTION: ${{ inputs.deploy_production }}
+        run: bash scripts/check-minimax-staging.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -85,10 +138,15 @@ jobs:
       - name: Regression tests
         run: |
           node tests/admin-operations.mjs
+          node tests/admin-availability.mjs
           node tests/local-delivery.mjs
           node tests/notification-outbox.mjs
+          node --test tests/first-sale-fiscal.mjs
           node tests/checkout-security.mjs
           node tests/checkout-availability.mjs
+          node tests/production-migrations.mjs
+          node --test tests/minimax-draft.mjs tests/minimax-admin.mjs tests/minimax-stock.mjs tests/minimax-reservations.mjs tests/minimax-handoff.mjs
+          node tests/minimax-staging-policy.mjs
           node tests/inquiry-security.mjs
 
       - name: Install isolated integration test dependencies
@@ -102,16 +160,28 @@ jobs:
       - name: Cloudflare runtime and browser regressions
         run: |
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/cloudflare-runtime.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/first-sale-runtime.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/checkout-availability-runtime.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/admin-availability-runtime.mjs
           MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/inquiry-runtime.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/inquiry-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/local-delivery-browser.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/first-sale-browser.mjs
           PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/admin-inquiries-browser.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/minimax-admin-runtime.mjs
+          MINIFLARE_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/miniflare" node tests/minimax-integrated-runtime.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/minimax-admin-browser.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/minimax-integrated-browser.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/minimax-stock-browser.mjs
+          PLAYWRIGHT_MODULE_PATH="$RUNNER_TEMP/qa/node_modules/playwright" node tests/admin-availability-browser.mjs
 
       - name: Validate JavaScript syntax
         run: |
           node --check worker/adriatic-trade-worker-v4.5.0.js
           node --check assets/js/admin.js
+          node --check assets/js/admin-availability.js
+          node --check assets/js/admin-probe.js
+          node --check assets/js/admin-stock.js
           node --check assets/js/inquiry-forms.js
 
       - name: Validate release version and required bindings
@@ -182,15 +252,51 @@ jobs:
               account_id: $account_id,
               d1_databases: [{binding: "DB", database_name: "adriatic-trade-orders-db", database_id: $database_id}],
               r2_buckets: [{binding: "RECEIPTS", bucket_name: "adriatic-trade-receipts"}],
-              vars: {TURNSTILE_SITE_KEY: "0x4AAAAAAFEPtKXCu1OUJtJ2"}
+              vars: {FIRST_SALE_MODE: "manual-minimax", TURNSTILE_SITE_KEY: "0x4AAAAAAFEPtKXCu1OUJtJ2"}
             }' > wrangler.deploy.json
+
+      - name: Record D1 recovery point before production migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 time-travel info adriatic-trade-orders-db --config wrangler.deploy.json --json > first-sale-time-travel.json
+          jq -e '.bookmark | type == "string" and length > 0' first-sale-time-travel.json
+          jq --arg database_id "$D1_DATABASE_ID" --arg revision "$GITHUB_SHA" --arg recorded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{database_id:$database_id,revision:$revision,recorded_at:$recorded_at,bookmark:.bookmark,backup_kind:"Cloudflare D1 managed Time Travel"}' \
+            first-sale-time-travel.json > first-sale-recovery.json
+
+      - name: Preserve production recovery metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: first-sale-recovery.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Apply approved availability migrations and pause intake
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --file cloudflare-d1-checkout-availability-v1.sql
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --file cloudflare-d1-admin-availability-v1.sql
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --command "UPDATE checkout_intake SET mode='paused',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),reason='Owner-approved production release 4.12.0; awaiting goods clearance and courier; do not open intake' WHERE id=1 AND mode!='paused'"
+
+      - name: Verify sales are paused before production deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --command "SELECT i.mode,c.revision FROM checkout_intake i JOIN checkout_control c ON c.id=i.id WHERE i.id=1" --json > first-sale-preflight.json
+          jq -e 'length == 1 and .[0].success == true and (.[0].results | length) == 1 and .[0].results[0].mode == "paused"' first-sale-preflight.json
 
       - name: Reject an obsolete main revision before deployment
         env:
           APPROVED_SHA: ${{ inputs.approved_sha }}
         run: bash scripts/check-worker-release.sh
 
-      - name: Deploy Worker v4.9.0
+      - name: Deploy Worker v4.12.0
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -201,11 +307,57 @@ jobs:
           for ATTEMPT in 1 2 3 4 5 6; do
             RESPONSE=$(curl --fail-with-body --silent --show-error \
               -H 'Cache-Control: no-cache' \
-              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.9.0-$ATTEMPT")
+              "https://adriatic-trade-orders.lakifinance.workers.dev/?deploy=4.12.0-$ATTEMPT")
             printf '%s\n' "$RESPONSE"
-            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.9.0" and .database == true and .receipts == true and .security == true and .inquiries == true'; then
+            if printf '%s' "$RESPONSE" | jq -e '.ok == true and .version == "4.12.0" and .firstSaleFiscal == true and .database == true and .receipts == true and .security == true and .inquiries == true'; then
               exit 0
             fi
             sleep 5
           done
           exit 1
+
+      - name: Confirm intake remains paused after deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute adriatic-trade-orders-db --remote --config wrangler.deploy.json --command "SELECT i.mode,c.revision,(SELECT COUNT(*) FROM orders) order_count,(SELECT COUNT(*) FROM checkout_stock) quota_rows FROM checkout_intake i JOIN checkout_control c ON c.id=i.id WHERE i.id=1" --json > first-sale-postflight.json
+          jq -e 'length == 1 and .[0].success == true and (.[0].results | length) == 1 and .[0].results[0].mode == "paused"' first-sale-postflight.json
+          jq '.[0].results' first-sale-postflight.json
+
+  minimax-staging:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_minimax_staging == true && inputs.deploy_production != true
+    needs: validate
+    runs-on: ubuntu-latest
+    concurrency:
+      group: adriatic-trade-minimax-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Check approved staging revision
+        env:
+          APPROVED_STAGING_SHA: ${{ inputs.approved_staging_sha }}
+          DEPLOY_PRODUCTION: ${{ inputs.deploy_production }}
+        run: bash scripts/check-minimax-staging.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Prepare synthetic pilot and isolated database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node tools/minimax-staging/prepare.mjs .minimax-stage
+          node tools/minimax-staging/configure.mjs
+          npx --yes wrangler@4 d1 execute adriatic-trade-minimax-staging --remote --config .minimax-stage/wrangler.json --file .minimax-stage/seed.sql
+      - name: Deploy isolated pilot only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy --config .minimax-stage/wrangler.json
+      - name: Pilot next step
+        run: |
+          echo "Open the existing isolated pilot. Previously configured ADMIN_TOKEN and MINIMAX secrets stay on that Worker; do not replace them."
+          echo "No Minimax request was made by this deployment. Open /admin.html on the staging Worker."

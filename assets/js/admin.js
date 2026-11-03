@@ -1,6 +1,7 @@
 (()=>{
-  const API='https://adriatic-trade-orders.lakifinance.workers.dev';
-  const KEY='at_admin_token';
+  const minimaxStage=location.hostname==='adriatic-trade-minimax-staging.lakifinance.workers.dev';
+  const API=minimaxStage?location.origin:'https://adriatic-trade-orders.lakifinance.workers.dev';
+  const KEY=minimaxStage?'at_minimax_stage_token':'at_admin_token';
   const login=document.querySelector('[data-admin-login]');
   const app=document.querySelector('[data-admin-app]');
   const loginForm=document.querySelector('[data-admin-login-form]');
@@ -42,21 +43,38 @@
     const res=await fetch(API+path,{...options,headers,credentials:'omit'});
     let data={};try{data=await res.json()}catch{}
     if(res.status===401){if(token===requestToken){sessionStorage.removeItem(KEY);token='';showLogin('Administratorski ključ nije prihvaćen.')}throw new Error('Unauthorized')}
-    if(!res.ok||data.ok===false)throw new Error(data.error||'Greška pri komunikaciji sa serverom.');
+    if(!res.ok||data.ok===false){const error=new Error(data.error||'Greška pri komunikaciji sa serverom.');error.status=res.status;error.code=data.code;error.step=data.step;error.sku=data.sku;error.upstreamStatus=data.upstreamStatus;throw error;}
     return data;
   }
 
+  const availability=typeof createAvailabilityController==='function'?createAvailabilityController({api,esc,dt,staging:minimaxStage}):null;
+
+  const probe=minimaxStage&&typeof createProbeController==='function'?createProbeController({api,esc,money,onAccepted:async id=>{await loadOrders();await openOrder(id);await availability?.load();}}):null;
+
+  const stock=minimaxStage&&typeof createMinimaxStockController==='function'?createMinimaxStockController({api,esc,dt}):null;
+
   function showLogin(message=''){
+    availability?.reset();
+    probe?.reset();
+    stock?.reset();
     resetInquiries();
     login.classList.remove('hidden');app.classList.add('hidden');logout.classList.add('hidden');
     loginError.textContent=message;loginError.classList.toggle('hidden',!message);
   }
-  function showApp(){login.classList.add('hidden');app.classList.remove('hidden');logout.classList.remove('hidden')}
+  function showApp(){stock?.show();login.classList.add('hidden');app.classList.remove('hidden');logout.classList.remove('hidden')}
   function notify(message,type=''){
     alertBox.textContent=message;alertBox.classList.remove('hidden','success');if(type==='success')alertBox.classList.add('success');
     setTimeout(()=>alertBox.classList.add('hidden'),4500);
   }
-  function setBusy(el,busy){if(!el)return;el.classList.toggle('admin-busy',busy);el.querySelectorAll?.('button,input,select').forEach(x=>x.disabled=busy)}
+  const disabledBeforeBusy=new WeakMap();
+  function setBusy(el,busy){
+    if(!el)return;el.classList.toggle('admin-busy',busy);
+    el.querySelectorAll?.('button,input,select,textarea').forEach(x=>{
+      if(busy){if(!disabledBeforeBusy.has(x))disabledBeforeBusy.set(x,x.disabled);x.disabled=true;}
+      else if(disabledBeforeBusy.has(x)){x.disabled=disabledBeforeBusy.get(x);disabledBeforeBusy.delete(x);}
+      // Newly rendered nodes keep their current business-rule disabled state.
+    });
+  }
 
   function resetInquiries(){
     inquiryRequest++;inquiries=[];inquiryFilter.value='';inquiryRefresh.disabled=false;
@@ -97,7 +115,7 @@
       if(request===inquiryRequest){inquiryRefresh.disabled=false;inquiryList.setAttribute('aria-busy','false');}
     }
   }
-  async function loadPanel(){await Promise.all([loadOrders(true),loadInquiries()])}
+  async function loadPanel(){await Promise.all([loadOrders(true),loadInquiries(),availability?.load(),probe?.load()])}
 
   async function loadOrders(selectFirst=false){
     const params=new URLSearchParams();
@@ -187,11 +205,21 @@
       <div class="admin-box"><h3>Isporuka</h3><div class="admin-info">${row('Način',o.delivery.method)}${row('Adresa',address)}${row('Napomena',o.delivery.note||'—')}${row('Plaćanje',o.payment||'Pouzećem')}</div></div></div>
       <div class="admin-items"><div class="admin-item admin-item-head"><div>Proizvod</div><div>Kol.</div><div>Iznos</div></div>${items}</div>
       <div class="admin-totals"><div class="admin-total-row"><span>Vrednost robe</span><strong>${esc(money(o.goodsTotal))}</strong></div><div class="admin-total-row"><span>Dostava</span><strong>${o.shipping===0?'Besplatna':esc(money(o.shipping))}</strong></div><div class="admin-total-row final"><span>Ukupno</span><span>${esc(money(o.total))}</span></div></div>
-      ${actions}
-      ${operationsForm(o)}
+      ${o.minimax?.enabled?'<section class="admin-box" data-minimax-panel aria-live="polite"><h3>Minimax · probni nacrt</h3><p>Učitavanje pregleda…</p></section>':''}
+      ${o.minimax?.enabled?'':fiscalPanel(o)}
+      ${o.minimax?.enabled?'':actions}
+      ${o.minimax?.enabled?'':operationsForm(o)}
       <div class="admin-events"><div class="admin-box"><h3>Istorija</h3>${events}</div></div>
     </div>`;
 
+    if(o.minimax?.enabled)loadMinimaxPreview(o);
+    if(o.fiscalControl?.required){
+      if(o.fiscalControl.sale)for(const button of detail.querySelectorAll('[data-local-payment]'))button.disabled=true;
+      for(const input of detail.querySelectorAll('[data-ship-form] [name="receipt"],[data-local-delivered-form] [name="receipt"]'))input.closest('.field').remove();
+      for(const button of detail.querySelectorAll('[data-ship-form] button[type="submit"],[data-local-delivered-form] button[type="submit"]'))button.disabled=!o.fiscalControl.ready;
+      const form=detail.querySelector('[data-fiscal-form]');
+      if(form){const mode=form.elements.deliveryMode;const update=()=>{const panel=mode.value==='panel';form.elements.receipt.required=panel;form.querySelector('[data-fiscal-sent-time]').classList.toggle('hidden',panel);form.elements.deliveredAt.required=!panel;form.querySelector('button[type="submit"]').textContent=panel?'Sačuvaj i pošalji fiskalni PDF':'Evidentiraj slanje iz Minimax-a';};mode.addEventListener('change',update);update();form.addEventListener('submit',e=>saveFiscal(e,o));}
+    }
     detail.querySelector('[data-operations]')?.addEventListener('submit',async e=>{
       e.preventDefault(); const body=Object.fromEntries(new FormData(e.currentTarget));body.revision=o.operationsRevision;
       setBusy(detail,true);
@@ -210,6 +238,41 @@
     detail.querySelector('[data-local-schedule-form]')?.addEventListener('submit',e=>saveLocalSchedule(e,o.id));
     detail.querySelector('[data-local-delivered-form]')?.addEventListener('submit',e=>finishLocalDelivery(e,o.id));
     detail.querySelector('[data-receipt]')?.addEventListener('click',()=>downloadReceipt(o.id,o.receiptFilename));
+  }
+
+  function fiscalPanel(o){
+    const f=o.fiscalControl;if(!f?.required)return '';
+    const preciseMoney=v=>new Intl.NumberFormat('sr-RS',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v)+' RSD';
+    const labels={accepted:'Email servis je prihvatio PDF',manually_recorded:'Slanje iz Minimax-a je ručno evidentirano',pending:'Email čeka slanje',sending:'Slanje je u toku',attention:'Potrebna je provera email servisa',missing:'Nedostaje potvrda slanja'};
+    const summary=(doc,title)=>doc?`<h4>${title}</h4><div class="admin-info">${row('PFR broj',doc.pfrNumber)}${row('Iznos',money(doc.amount))}${row('Slanje',labels[doc.deliveryStatus]||'Nepotvrđeno')}${row('Primalac',doc.recipient)}</div><p>Podatke je ručno potvrdio administrator. Prihvatanje email servisa nije potvrda prijema u inbox.</p>`:'';
+    const kind=f.sale?'refund':'sale',canRecord=(o.status==='confirmed'||(o.status==='shipped'&&f.sale))&&!f.refund;
+    const form=canRecord&&!f.preparationError?`<form class="admin-ship-form" data-fiscal-form data-kind="${kind}">
+      <div class="field wide"><label>PFR broj ${kind==='refund'?'pune refundacije':'prodaje'} *</label><input name="pfrNumber" maxlength="40" placeholder="Broj sa izdatog fiskalnog računa" required></div>
+      <div class="field"><label>Vreme izdavanja računa *</label><input name="issuedAt" type="datetime-local" step="1" required></div>
+      <div class="field"><label>Ukupan iznos računa (RSD) *</label><input name="amount" type="number" step="0.01" min="0.01" value="${esc(o.total.toFixed(2))}" required></div>
+      <div class="field wide"><label>Email kupca *</label><input name="recipient" type="email" value="${esc(o.customer.email)}" readonly required></div>
+      <div class="field wide"><label>Dostavljanje računa *</label><select name="deliveryMode"><option value="panel">Pošalji originalni PDF iz panela</option><option value="minimax">Već je poslat iz Minimax-a</option></select></div>
+      <div class="field wide hidden" data-fiscal-sent-time><label>Stvarno vreme slanja iz Minimax-a *</label><input name="deliveredAt" type="datetime-local" step="1"></div>
+      <div class="field wide"><label>Originalni fiskalni PDF</label><input name="receipt" type="file" accept="application/pdf,.pdf"><small>Do 5 MB. Obavezan za slanje iz panela.</small></div>
+      <div class="field wide"><label>Beleška o proveri *</label><textarea name="reason" minlength="5" maxlength="500" rows="2" required></textarea></div>
+      <label class="checkbox wide"><input name="confirmed" type="checkbox" value="yes" required><span>Proverio/la sam originalni fiskalni dokument, PFR broj, iznos, artikle, vrstu dokumenta, način plaćanja i email konkretnog kupca. Ako je izabran Minimax, proverio/la sam da je račun već poslat toj osobi.</span></label>
+      <div class="wide"><button class="btn btn-primary" type="submit">Sačuvaj i pošalji fiskalni PDF</button></div></form>`:'';
+    return `<section class="admin-box" data-fiscal-panel><h3>Fiskalni račun</h3><p>Ovde povezujete već izdat račun iz Minimax-a. Panel ne izdaje račun niti automatski proverava njegovu autentičnost.</p>${summary(f.sale,'Prodaja')}${summary(f.refund,'Puna refundacija')}
+      ${f.preparationError?`<p class="notice">${esc(f.preparationError)}</p>`:`<div class="admin-stock-table-wrap" role="region" aria-label="Priprema stavki za Minimax" tabindex="0"><table class="admin-stock-table" data-fiscal-invoice-rows><caption>Priprema za unos u Minimax · sačuvane cene sa PDV-om</caption><thead><tr><th scope="col">Šifra</th><th scope="col">Artikal</th><th scope="col" class="stock-number">Kol.</th><th scope="col" class="stock-number">Cena sa PDV</th><th scope="col" class="stock-number">Iznos</th></tr></thead><tbody>${f.invoiceRows.map(r=>`<tr><th scope="row">${esc(r.sku)}</th><td>${esc(r.name)}</td><td class="stock-number">${esc(r.qty)}</td><td class="stock-number">${esc(preciseMoney(r.price))}</td><td class="stock-number">${esc(preciseMoney(r.value))}</td></tr>`).join('')}</tbody></table></div><p>Ovo je priprema stavki, a ne izdat račun. Poreska podešavanja i način plaćanja proverite u Minimax-u.</p>`}
+      <p><strong>${f.ready?'Račun je evidentiran i slanje je potvrđeno za nastavak isporuke.':f.refund?'Evidentirana je refundacija; slanje robe je zaustavljeno.':'Pre predaje robe povežite račun i proverite slanje kupcu.'}</strong></p>
+      ${f.sale?form?`<details><summary>Evidentiraj punu refundaciju iz Minimax-a</summary><p>Prvo uradite punu refundaciju u Minimax-u. Ovim se beleži dokument i veza sa originalom; naplata i povrat robe vode se posebno.</p>${form}</details>`:'':form}</section>`;
+  }
+  async function saveFiscal(e,o){
+    e.preventDefault();const form=e.currentTarget,fd=new FormData(form);
+    for(const key of ['issuedAt','deliveredAt']){const value=fd.get(key);if(value){const date=new Date(value);if(!Number.isFinite(date.getTime())){notify('Proverite vreme izdavanja i slanja.');return;}fd.set(key,date.toISOString());}}
+    const file=form.elements.receipt.files[0];if(file&&file.size>5*1024*1024){notify('PDF može imati najviše 5 MB.');return;}
+    if(!confirm('Sačuvati provereni fiskalni dokument i izabrani način dostavljanja kupcu?'))return;
+    if(!form.dataset.operationId)form.dataset.operationId=crypto.randomUUID();
+    fd.set('operationId',form.dataset.operationId);fd.set('revision',String(o.operationsRevision));fd.set('kind',form.dataset.kind);
+    if(form.dataset.kind==='refund')fd.set('originalPfr',o.fiscalControl.sale.pfrNumber);
+    setBusy(detail,true);
+    try{const data=await api('/admin/orders/'+encodeURIComponent(o.id)+'/fiscal',{method:'POST',body:fd});await loadOrders();renderDetail(data.order);notify(data.warning||'Fiskalni dokument je sačuvan. Proverite prikazani status slanja.',data.emailPending?'':'success');}
+    catch(error){notify(error.message);}finally{setBusy(detail,false);}
   }
 
   function row(label,value){return `<div class="admin-info-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
@@ -358,6 +421,38 @@
   function cashOnDeliveryAmount(o){return ['Lična dostava — IPS na račun','Lična dostava — uplata na račun'].includes(o.payment)||['paid','refunded'].includes(o.operations.paymentStatus)?0:o.total}
   const opsLabels={pending:'Čeka pripremu',ready:'Spremna za slanje',shipped:'Poslata',delivered:'Isporučena',returned:'Vraćena',failed:'Neuspešna isporuka',unpaid:'Nenaplaćena',paid:'Naplaćena',refunded:'Refundirana',approved:'Proverena — prihvatljiva',rejected:'Proverena — odbijena'};
   function eventNote(e){if(e.event_type!=='operations')return e.note;try{const n=JSON.parse(e.note);return n.actor+' · '+n.reason+' · '+n.changes.map(c=>c.key+': '+(opsLabels[c.before]||c.before||'—')+' → '+(opsLabels[c.after]||c.after||'—')).join('; ')}catch{return e.note}}
+  async function loadMinimaxPreview(o){
+    const panel=detail.querySelector('[data-minimax-panel]');
+    if(!panel)return;
+    const path='/admin/orders/'+encodeURIComponent(o.id)+'/minimax-draft';
+    const amount=n=>Number(n).toLocaleString('sr-RS',{minimumFractionDigits:2,maximumFractionDigits:2})+' RSD';
+    try{
+      const data=await api(path);
+      if(!panel.isConnected||selectedId!==o.id)return;
+      panel.classList.remove('admin-busy');
+      const states={preview:'Spreman pregled',sending:'Ishod prenosa treba proveriti',attention:'Ishod prenosa treba proveriti',created:'Nacrt je sačuvan; čeka proveru',verified:'Nacrt je pročitan i proveren'};
+      panel.innerHTML=`<h3>Minimax · probni nacrt</h3><p><strong>${esc(states[data.status]||'Potrebna provera')}</strong>. Račun se ne izdaje.</p>
+        <div style="overflow-x:auto"><table><thead><tr><th>Artikal</th><th>Kol.</th><th>Cena sa PDV</th><th>Iznos</th></tr></thead><tbody>${data.rows.map(r=>`<tr><td>${esc(r.name)}<br><small>${esc(r.sku)} ${esc(r.description)}</small></td><td>${esc(r.qty)}</td><td>${esc(amount(r.price))}</td><td>${esc(amount(r.value))}</td></tr>`).join('')}</tbody></table></div>
+        <p><strong>Ukupno: ${esc(amount(data.total))}</strong></p>
+        ${data.link?`<p><a href="${esc(data.link)}" target="_blank" rel="noopener noreferrer">Otvori postojeći nacrt ${esc(data.invoiceId)}</a></p>`:''}
+        ${data.sourceChanged?'<p>Porudžbina je izmenjena posle prenosa. Potrebna je ručna provera nacrta; novi se neće praviti.</p>':''}
+        ${!data.ready?'<p>Pristupni podaci za probnu vezu još nisu podešeni na serveru.</p>':''}
+        ${data.lastError?`<p>Oznaka za proveru: ${esc(data.lastError)}. Nemojte ponavljati prenos.</p>`:''}
+        ${data.ready&&!data.sourceChanged?(data.status==='preview'?'<button type="button" class="btn btn-primary" data-mm-create>Napravi probni nacrt</button>':`${!data.invoiceId?'<label>ID već postojećeg nacrta <input data-mm-id inputmode="numeric" pattern="[0-9]+"></label>':''}<button type="button" class="btn btn-secondary" data-mm-verify>Proveri postojeći nacrt</button>`):''}`;
+      const send=async(action)=>{
+        if(action==='create'&&!confirm('Napraviti jedan probni nacrt od '+amount(data.total)+'? Račun se ne izdaje.'))return;
+        const invoiceId=panel.querySelector('[data-mm-id]')?.value;
+        if(action==='verify'&&!data.invoiceId&&!/^[1-9]\d*$/.test(invoiceId||'')){notify('Unesite ID nacrta koji već postoji u Minimax-u.');return;}
+        setBusy(panel,true);
+        try{const result=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,confirm:true,previewHash:data.previewHash,invoiceId})});notify(result.status==='verified'?'Probni nacrt je proveren. Račun nije izdat.':'Osvežena je evidencija prenosa.','success');}
+        catch(error){notify(error.message);}
+        finally{if(panel.isConnected&&selectedId===o.id)await loadMinimaxPreview(o);}
+      };
+      panel.querySelector('[data-mm-create]')?.addEventListener('click',()=>send('create'));
+      panel.querySelector('[data-mm-verify]')?.addEventListener('click',()=>send('verify'));
+    }catch(error){if(panel.isConnected&&selectedId===o.id){panel.classList.remove('admin-busy');panel.innerHTML='<h3>Minimax · probni nacrt</h3><p>'+esc(error.message)+'</p>';}}
+  }
+
   function operationsForm(o){const v=o.operations||{};const local=(o.events||[]).some(e=>e.event_type==='local_delivery_approved')||o.courier==='Lična dostava';
     if(['rejected','cancelled'].includes(o.status)) {
       return `<div class="admin-box admin-operations-locked"><h3>Operativna evidencija — zaključana</h3><p>Porudžbina je ${o.status==='rejected'?'odbijena':'otkazana'}. Priprema, isporuka i štampanje nalepnice su obustavljeni. Sačuvani podaci i istorija ostaju dostupni za pregled.</p><div class="admin-info">
@@ -382,7 +477,7 @@
       ${select('riskReview','Provera porudžbine',['pending','approved','rejected'])}
       <div class="field wide"><label>Interna beleška<textarea name="internalNote" maxlength="2000" rows="3">${esc(v.internalNote||'')}</textarea></label><small>Vidljivo samo administratoru.</small></div>
       <div class="wide"><h3>Fiskalizacija</h3><p>Priprema za integraciju. Ovde se evidentira račun iz fiskalnog sistema; unos broja ne izdaje niti proverava račun.</p></div>
-      ${field('fiscalProvider','Fiskalni sistem')}${field('fiscalNumber','Broj fiskalnog računa')}${field('fiscalReference','Referenca izvornog računa / refundacije')}
+      ${o.fiscalControl?.required?'<div class="wide">Fiskalni dokumenti se povezuju kroz odeljak Fiskalni račun iznad.</div>':`${field('fiscalProvider','Fiskalni sistem')}${field('fiscalNumber','Broj fiskalnog računa')}${field('fiscalReference','Referenca izvornog računa / refundacije')}`}
       <div class="field wide"><label>Razlog izmene *<input name="reason" required maxlength="500"></label></div>
       <div class="wide"><button class="btn btn-primary" type="submit">Sačuvaj evidenciju</button></div>
     </form><h3>Nalepnica za paket</h3><label>Format <select data-label-size><option value="100x150">100 × 150 mm</option><option value="80x100">80 × 100 mm</option></select></label> <button class="btn btn-secondary" type="button" data-print-label>Štampaj adresnu nalepnicu</button><p>Adresna nalepnica. Kurirska nalepnica sa barkodom biće dostupna nakon povezivanja kurira.</p></div>`;
