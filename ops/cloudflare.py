@@ -12,11 +12,15 @@ class Cloudflare:
         try:
             with urllib.request.urlopen(req,timeout=60) as r:
                 body=r.read(128*1024*1024+1)
+                status=r.status
         except urllib.error.HTTPError as e:
             # Do not print response bodies, signed URLs, tokens or record contents.
             raise RuntimeError('Cloudflare API HTTP '+str(e.code)+' for '+('R2 object' if '/objects/' in path else path.split('?')[0])) from None
         if len(body)>128*1024*1024:raise RuntimeError('Cloudflare response exceeds backup limit')
         if raw:return body
+        # Worker custom-domain DELETE can succeed with no JSON response body.
+        if method=='DELETE' and 200<=status<300 and not body:
+            return {'success':True,'result':None}
         value=json.loads(body)
         if value.get('success') is not True:raise RuntimeError('Cloudflare API unsuccessful for '+('R2 object' if '/objects/' in path else path.split('?')[0]))
         return value

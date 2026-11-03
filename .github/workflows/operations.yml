@@ -173,12 +173,10 @@ jobs:
         run: |
           PYTHONPATH=ops python3 -c 'from cloudflare import Cloudflare; c=Cloudflare(); assert c.query(c.database(),"SELECT mode FROM checkout_intake WHERE id=1")==[{"mode":"paused"}]'
           python3 ops/hosting.py cutover
-          READY=false
-          for ATTEMPT in $(seq 1 24); do
-            if curl --fail --silent https://adriatictrade.rs/hosting-status.json | jq -e --arg sha "$GITHUB_SHA" '.revision==$sha' && curl --fail --silent https://www.adriatictrade.rs/hosting-status.json | jq -e --arg sha "$GITHUB_SHA" '.revision==$sha'; then READY=true; break; fi
-            sleep 5
-          done
-          if [[ "$READY" != true ]]; then python3 ops/hosting.py rollback; exit 1; fi
+          if ! python3 ops/hosting.py verify --revision "$GITHUB_SHA"; then
+            python3 ops/hosting.py rollback
+            exit 1
+          fi
       - name: Save DNS recovery metadata
         if: always() && env.TASK == 'hosting-cutover'
         uses: actions/upload-artifact@v4
