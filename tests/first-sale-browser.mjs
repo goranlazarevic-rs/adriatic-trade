@@ -32,6 +32,9 @@ try{for(const width of [1440,390,320]){
   }
   assert.ok(await page.locator('body').evaluate(el=>el.scrollWidth<=innerWidth+1),'Portal review form must fit the viewport');
   if(process.env.QA_SCREENSHOT_DIR){fs.mkdirSync(process.env.QA_SCREENSHOT_DIR,{recursive:true});await fiscal.screenshot({path:process.env.QA_SCREENSHOT_DIR+'/fiscal-review-form-'+width+'.png'});}
+  // A tall-form screenshot can leave smooth scrolling active on narrow screens.
+  // Position the actual button immediately, then retain Playwright's normal click checks.
+  await fiscal.locator('button[type="submit"]').evaluate(el=>el.scrollIntoView({behavior:'instant',block:'center'}));
   h.state.email='error';await fiscal.locator('button[type="submit"]').click();await page.locator('[data-fiscal-panel]').getByText('Email čeka slanje',{exact:true}).waitFor();assert.equal(await shipping.locator('button[type="submit"]').isDisabled(),true);
   h.state.email='ok';await page.locator('[data-email-retry]').click();await page.locator('[data-fiscal-panel]').getByText('Email servis je prihvatio PDF',{exact:true}).waitFor();assert.equal(await shipping.locator('button[type="submit"]').isEnabled(),true);
   assert.equal(Boolean((await h.get(id)).fiscalControl.sale.portalReview),width===1440);

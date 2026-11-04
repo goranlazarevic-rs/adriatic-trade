@@ -18,13 +18,19 @@ try {
     @'
 let data='';for await(const chunk of process.stdin)data+=chunk.toString('utf8');
 const token=JSON.parse(data).token;
-if(token!=='SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789'+String.fromCharCode(269))process.exit(4);
+if(token!=='SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789'+String.fromCharCode(269)){
+  console.error('Synthetic encoding mismatch: length='+token.length+'; last='+token.charCodeAt(token.length-1));process.exit(4);
+}
 if(process.argv.some(v=>v.includes(token)))process.exit(5);
 console.log('PASS hidden stdin credential');
 '@ | Set-Content -LiteralPath (Join-Path $folder 'download.mjs')
     $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $folder 'run.ps1')
     $joined = $output -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $joined -notmatch 'PASS hidden stdin credential' -or $joined.Contains($credential)) { throw 'Credential transport failed' }
+    if ($joined.Contains($credential)) { throw 'Credential appeared in output' }
+    if ($LASTEXITCODE -ne 0 -or $joined -notmatch 'PASS hidden stdin credential') {
+        Write-Host ('Wrapper exit code: ' + $LASTEXITCODE + '; output: ' + $joined)
+        throw 'Credential transport failed'
+    }
     Write-Host 'PASS Windows: setup/run syntax, DPAPI storage and hidden credential stdin.'
 } finally {
     Remove-Item -LiteralPath $folder -Recurse -Force

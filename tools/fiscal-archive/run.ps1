@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$stage = 'credential'
 try {
     $state = $PSScriptRoot
     $config = Join-Path $state 'config.json'
@@ -15,6 +16,7 @@ try {
     try {
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
         $payload = @{ token = $plain } | ConvertTo-Json -Compress
+        $stage = 'process-start'
         # Write raw UTF-8 bytes: Windows PowerShell's native pipeline can prepend
         # a BOM even when OutputEncoding is changed. No secret in argv or logs.
         $start = New-Object Diagnostics.ProcessStartInfo
@@ -31,11 +33,13 @@ try {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $utf8 = New-Object Text.UTF8Encoding($false)
+        $stage = 'stdin'
         $bytes = $utf8.GetBytes($payload)
         $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
         $process.StandardInput.BaseStream.Flush()
         $process.StandardInput.Close()
         $process.WaitForExit()
+        $stage = 'result'
         $output = $stdoutTask.GetAwaiter().GetResult()
         $errors = $stderrTask.GetAwaiter().GetResult()
         if ($output) { Write-Host $output.TrimEnd() }
@@ -49,6 +53,6 @@ try {
     }
     exit $code
 } catch {
-    Write-Host 'Preuzimanje nije zavrseno. Proverite Node.js, lokalno podesavanje i pristup arhivi.'
+    Write-Host ('Preuzimanje nije zavrseno [' + $stage + ']. Proverite Node.js, lokalno podesavanje i pristup arhivi.')
     exit 1
 }
