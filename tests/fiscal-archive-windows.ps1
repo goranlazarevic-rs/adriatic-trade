@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-foreach ($script in @('tools/fiscal-archive/setup.ps1','tools/fiscal-archive/run.ps1')) {
+foreach ($script in @('tools/fiscal-archive/setup.ps1','tools/fiscal-archive/run.ps1','tools/fiscal-archive/destination.ps1')) {
     $tokens = $null; $errors = $null
     [Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) $script), [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors.Count) { throw ('PowerShell parse failed: ' + $script) }
@@ -8,6 +8,19 @@ $folder = Join-Path ([IO.Path]::GetTempPath()) ('at-archive-windows-' + [guid]::
 New-Item -ItemType Directory -Path $folder | Out-Null
 $previousArchiveModule = $env:AT_ARCHIVE_MODULE
 try {
+    . (Join-Path (Get-Location) 'tools/fiscal-archive/destination.ps1')
+    $oneDrive = Join-Path $folder 'OneDrive - TEST'
+    $expected = Join-Path $oneDrive ('Desktop\TEST FIRMA\FISKALNI RA' + [char]0x010c + 'UNI')
+    $preferencesFile = Join-Path $folder 'destination.json'
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($preferencesFile, (@{ root = $expected } | ConvertTo-Json), $utf8)
+    $actual = Resolve-ArchiveDestination -Destination (Read-ArchiveDestination $preferencesFile) -OneDriveRoots @($oneDrive)
+    if ($actual -cne $expected) { throw 'Unicode destination was changed' }
+    foreach ($bad in @((Join-Path $folder 'outside'), ($oneDrive + '-other\invoices'), (Join-Path $oneDrive '..\outside'), 'relative\invoices')) {
+        $rejected = $false
+        try { Resolve-ArchiveDestination -Destination $bad -OneDriveRoots @($oneDrive) | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Destination outside OneDrive was accepted' }
+    }
     $env:AT_ARCHIVE_MODULE = Join-Path (Get-Location) 'tools/fiscal-archive/download.mjs'
     Copy-Item -LiteralPath 'tools/fiscal-archive/run.ps1' -Destination $folder
     $credential = 'SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789' + [char]0x010d

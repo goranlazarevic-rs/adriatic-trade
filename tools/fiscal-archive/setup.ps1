@@ -1,5 +1,7 @@
+param([string]$Destination = '')
 $ErrorActionPreference = 'Stop'
 try {
+    . (Join-Path $PSScriptRoot 'destination.ps1')
     if ($env:OS -ne 'Windows_NT') { throw 'Windows required' }
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $nodeVersion = (& $node --version).TrimStart('v')
@@ -7,12 +9,16 @@ try {
     $candidates = @(@($env:OneDriveConsumer, $env:OneDriveCommercial, $env:OneDrive) |
         Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique)
     if ($candidates.Count -eq 0) { throw 'OneDrive folder not found' }
-    Write-Host 'OneDrive folderi na ovom racunaru:'
-    for ($i = 0; $i -lt $candidates.Count; $i++) { Write-Host ($i + 1) $candidates[$i] }
-    $choice = 1
-    if ($candidates.Count -gt 1) { $choice = [int](Read-Host 'Unesite broj OneDrive naloga za racune firme') }
-    if ($choice -lt 1 -or $choice -gt $candidates.Count) { throw 'Invalid folder' }
-    $root = Join-Path $candidates[$choice - 1] 'Adriatic Trade\Fiskalni racuni'
+    if (-not $Destination) { $Destination = Read-ArchiveDestination (Join-Path $PSScriptRoot 'destination.json') }
+    if (-not $Destination) {
+        Write-Host 'OneDrive folderi na ovom racunaru:'
+        for ($i = 0; $i -lt $candidates.Count; $i++) { Write-Host ($i + 1) $candidates[$i] }
+        $choice = 1
+        if ($candidates.Count -gt 1) { $choice = [int](Read-Host 'Unesite broj OneDrive naloga za racune firme') }
+        if ($choice -lt 1 -or $choice -gt $candidates.Count) { throw 'Invalid folder' }
+        $Destination = Join-Path $candidates[$choice - 1] 'Adriatic Trade\Fiskalni racuni'
+    }
+    $root = Resolve-ArchiveDestination -Destination $Destination -OneDriveRoots $candidates
     Write-Host 'Folder racuna:' $root
     Write-Host 'Unesite poseban KLJUC ARHIVE koji dozvoljava samo preuzimanje. Ne unosite administratorski kljuc.'
     $secret = Read-Host 'Kljuc arhive' -AsSecureString

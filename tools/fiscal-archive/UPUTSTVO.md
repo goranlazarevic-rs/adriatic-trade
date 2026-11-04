@@ -19,6 +19,8 @@ Administrator objavljuje pregledanu izmenu Workera i kroz bezbedno upravljanje t
 
 1. Potrebni su Windows 10/11, prijavljen i pokrenut OneDrive i Node.js 22 ili noviji. Raspakujte paket.
 2. Pokrenite `PODESI-ARHIVU.cmd`. Ako postoji više OneDrive naloga, izaberite broj naloga namenjenog firmi. Unesite poseban ključ arhive u skriveno polje.
+
+Ako je uz instalacioni paket isporučen privatni `destination.json`, instalacija automatski koristi njegovu putanju, uključujući razmake i srpska slova. Odredište mora biti unutar postojećeg OneDrive naloga na tom računaru. Taj fajl sadrži samo putanju i ne postavlja se u javni repozitorijum. Putanja se može zadati i parametrom `-Destination` pri pokretanju `setup.ps1`.
 3. Prvo preuzimanje mora uspeti i arhiva biti potpuna da bi se zadatak uključio. Prazna nova evidencija može biti ispravna; uporedite broj dokumenata sa admin panelom. Nije potrebno izdavati probni fiskalni račun radi instalacije.
 4. U otvorenom folderu za `Fiskalni racuni` izaberite desni klik → **Always keep on this device**. Sačekajte da OneDrive potvrdi sinhronizaciju. Tako imate kopiju i na disku i na cloud-u.
 
