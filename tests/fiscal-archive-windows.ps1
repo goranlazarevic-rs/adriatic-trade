@@ -6,7 +6,9 @@ foreach ($script in @('tools/fiscal-archive/setup.ps1','tools/fiscal-archive/run
 }
 $folder = Join-Path ([IO.Path]::GetTempPath()) ('at-archive-windows-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $folder | Out-Null
+$previousArchiveModule = $env:AT_ARCHIVE_MODULE
 try {
+    $env:AT_ARCHIVE_MODULE = Join-Path (Get-Location) 'tools/fiscal-archive/download.mjs'
     Copy-Item -LiteralPath 'tools/fiscal-archive/run.ps1' -Destination $folder
     $credential = 'SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789' + [char]0x010d
     $secure = ConvertTo-SecureString $credential -AsPlainText -Force
@@ -17,7 +19,9 @@ try {
     # Exercise the real Windows PowerShell wrapper, DPAPI decryption and stdin pipe.
     @'
 let data='';for await(const chunk of process.stdin)data+=chunk.toString('utf8');
-const token=JSON.parse(data).token;
+const {pathToFileURL}=await import('node:url');
+const {parseArchiveCredential}=await import(pathToFileURL(process.env.AT_ARCHIVE_MODULE));
+const token=parseArchiveCredential(data);
 if(token!=='SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789'+String.fromCharCode(269)){
   console.error('Synthetic encoding mismatch: length='+token.length+'; last='+token.charCodeAt(token.length-1));process.exit(4);
 }
@@ -33,5 +37,6 @@ console.log('PASS hidden stdin credential');
     }
     Write-Host 'PASS Windows: setup/run syntax, DPAPI storage and hidden credential stdin.'
 } finally {
+    $env:AT_ARCHIVE_MODULE = $previousArchiveModule
     Remove-Item -LiteralPath $folder -Recurse -Force
 }

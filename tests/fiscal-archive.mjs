@@ -6,10 +6,15 @@ import path from 'node:path';
 import vm from 'node:vm';
 import {createHash} from 'node:crypto';
 import {harness} from './helpers/local-delivery-harness.mjs';
-import {downloadArchive,documentPath,API} from '../tools/fiscal-archive/download.mjs';
+import {downloadArchive,documentPath,parseArchiveCredential,API} from '../tools/fiscal-archive/download.mjs';
 
 const token='synthetic-read-only-archive-token-123456789';
 const hash=buffer=>createHash('sha256').update(buffer).digest('hex');
+test('credential input accepts Windows UTF-8 preamble without changing Unicode or accepting malformed/oversized input',()=>{
+  const expected=token+'č',input=JSON.stringify({token:expected});
+  assert.equal(parseArchiveCredential(input),expected);assert.equal(parseArchiveCredential('\uFEFF'+input),expected);
+  for(const bad of ['{}','null','{"token":42}','not-json','x'.repeat(4097)])assert.throws(()=>parseArchiveCredential(bad));
+});
 async function fixture(){
   const h=harness();h.ctx.env.FIRST_SALE_MODE='manual-minimax';h.ctx.env.FISCAL_ARCHIVE_TOKEN=token;
   const order=await h.add(undefined,{local:false,status:'confirmed'});await h.get(order);

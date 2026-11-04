@@ -9,6 +9,14 @@ const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const MAX_PDF=5*1024*1024;
 function demand(ok,message){if(!ok)throw Error(message);}
 
+export function parseArchiveCredential(input) {
+  demand(typeof input==='string'&&input.length<=4096,'Neispravan unos kljuca.');
+  // Windows PowerShell/.NET may prefix redirected UTF-8 stdin with a BOM.
+  const data=JSON.parse(input.replace(/^\uFEFF/,''));
+  demand(data&&typeof data.token==='string','Nedostaje kljuc arhive.');
+  return data.token;
+}
+
 export function documentPath(doc) {
   demand(uuid.test(doc.id)&&['sale','refund'].includes(doc.kind)&&typeof doc.orderId==='string'&&doc.orderId.length<=160,'Neispravna oznaka dokumenta.');
   demand(typeof doc.sha256==='string'&&/^[a-f0-9]{64}$/.test(doc.sha256),'Nedostaje kontrolni otisak originala.');
@@ -96,7 +104,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
     const configPath=path.resolve(process.argv[2]);
     const config=JSON.parse(await fs.readFile(configPath,'utf8'));
     let input='';for await(const part of process.stdin){input+=part.toString('utf8');demand(input.length<=4096,'Neispravan unos kljuca.');}
-    const result=await downloadArchive({root:config.root,stateDirectory:path.dirname(configPath),token:JSON.parse(input.replace(/^\uFEFF/,'')).token});input='';
+    const result=await downloadArchive({root:config.root,stateDirectory:path.dirname(configPath),token:parseArchiveCredential(input)});input='';
     console.log(`Sacuvano novih PDF: ${result.downloaded}; provereno postojecih: ${result.verified}.`);
     if(result.incomplete||result.legacy){console.error(`POTREBNA DOPUNA: bez originala ${result.incomplete}; raniji dokumenti za povezivanje ${result.legacy}.`);process.exitCode=2;}
     console.log('Preuzimanje je zavrseno. Status OneDrive slanja proverite u OneDrive aplikaciji.');

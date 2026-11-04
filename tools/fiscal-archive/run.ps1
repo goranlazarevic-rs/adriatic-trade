@@ -17,8 +17,8 @@ try {
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
         $payload = @{ token = $plain } | ConvertTo-Json -Compress
         $stage = 'process-start'
-        # Write raw UTF-8 bytes: Windows PowerShell's native pipeline can prepend
-        # a BOM even when OutputEncoding is changed. No secret in argv or logs.
+        # The reader accepts an optional UTF-8 preamble from .NET Framework.
+        # Write the secret only to stdin, never to process arguments or logs.
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = $node
         $start.Arguments = '"' + (Join-Path $state 'download.mjs') + '" "' + $config + '"'
