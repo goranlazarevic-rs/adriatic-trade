@@ -12,17 +12,39 @@ try {
     }
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
-    $previousOutputEncoding = $OutputEncoding
     try {
-        $OutputEncoding = New-Object Text.UTF8Encoding($false)
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
         $payload = @{ token = $plain } | ConvertTo-Json -Compress
-        # Secret travels over stdin, never as a process argument or log entry.
-        $payload | & $node (Join-Path $state 'download.mjs') $config
-        $code = $LASTEXITCODE
+        # Write raw UTF-8 bytes: Windows PowerShell's native pipeline can prepend
+        # a BOM even when OutputEncoding is changed. No secret in argv or logs.
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $node
+        $start.Arguments = '"' + (Join-Path $state 'download.mjs') + '" "' + $config + '"'
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $process = New-Object Diagnostics.Process
+        $process.StartInfo = $start
+        if (-not $process.Start()) { throw 'Downloader did not start' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $utf8 = New-Object Text.UTF8Encoding($false)
+        $bytes = $utf8.GetBytes($payload)
+        $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $process.StandardInput.BaseStream.Flush()
+        $process.StandardInput.Close()
+        $process.WaitForExit()
+        $output = $stdoutTask.GetAwaiter().GetResult()
+        $errors = $stderrTask.GetAwaiter().GetResult()
+        if ($output) { Write-Host $output.TrimEnd() }
+        if ($errors) { Write-Host $errors.TrimEnd() }
+        $code = $process.ExitCode
+        $process.Dispose()
     } finally {
-        $OutputEncoding = $previousOutputEncoding
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+        if ($bytes) { [Array]::Clear($bytes, 0, $bytes.Length) }
         $plain = $null; $payload = $null; $secret = $null
     }
     exit $code
