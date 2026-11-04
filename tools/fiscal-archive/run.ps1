@@ -37,11 +37,15 @@ try {
         $bytes = $utf8.GetBytes($payload)
         $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
         $process.StandardInput.BaseStream.Flush()
-        $process.StandardInput.Close()
+        # Close the underlying stream only. Disposing the unused StreamWriter
+        # can append its own UTF-8 preamble after the JSON on .NET Framework.
+        $process.StandardInput.BaseStream.Close()
         $process.WaitForExit()
         $stage = 'result'
         $output = $stdoutTask.GetAwaiter().GetResult()
         $errors = $stderrTask.GetAwaiter().GetResult()
+        $output = $output.Replace($plain, '[redacted]')
+        $errors = $errors.Replace($plain, '[redacted]')
         if ($output) { Write-Host $output.TrimEnd() }
         if ($errors) { Write-Host $errors.TrimEnd() }
         $code = $process.ExitCode
