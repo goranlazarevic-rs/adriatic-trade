@@ -9,7 +9,7 @@ def sql(path): db.executescript(pathlib.Path(path).read_text())
 def migrate():
  sql('cloudflare-d1-checkout-availability-v1.sql')
  sql('cloudflare-d1-admin-availability-v1.sql')
- db.execute("UPDATE checkout_intake SET mode='paused',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),reason='Owner-approved production release 4.12.0; awaiting goods clearance and courier; do not open intake' WHERE id=1 AND mode!='paused'")
+ db.execute("UPDATE checkout_intake SET mode='paused',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),reason='Owner-approved production release 4.13.0; awaiting goods clearance and courier; do not open intake' WHERE id=1 AND mode!='paused'")
 def rows(table): return db.execute('SELECT * FROM '+table+' ORDER BY 1').fetchall()
 sql('cloudflare-d1-schema-v1.sql')
 db.execute("INSERT INTO orders(id,submission_id,created_at,updated_at,customer_first_name,customer_last_name,customer_email,customer_phone,delivery_method,postal_code,city,items_json,goods_total,shipping,total) VALUES('synthetic','synthetic','2026-11-03','2026-11-03','Test','Test','test@example.invalid','060000000','Test','21000','Test','[]',0,0,0)")

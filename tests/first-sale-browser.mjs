@@ -4,10 +4,11 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {harness} from './helpers/local-delivery-harness.mjs';
+import {reviewFields} from './helpers/fiscal-review-fixture.mjs';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'playwright');
 const root=process.cwd(),host='adriatic-trade-orders.lakifinance.workers.dev';
 const server=http.createServer((req,res)=>{const file=path.join(root,new URL(req.url,'http://localhost').pathname);if(!file.startsWith(root+path.sep)){res.writeHead(403).end();return;}try{res.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.css')?'text/css':file.endsWith('.html')?'text/html':'image/png');res.end(fs.readFileSync(file));}catch{res.writeHead(404).end();}});
-await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({headless:true});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE,args:['--no-sandbox','--disable-dev-shm-usage','--no-zygote','--single-process','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--in-process-gpu']}:{})});
 try{for(const width of [1440,390,320]){
   const h=harness();h.ctx.env.FIRST_SALE_MODE='manual-minimax';const id=await h.add('AT-20261103-BROWSER',{local:false});
   const page=await browser.newPage({viewport:{width,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
@@ -20,8 +21,31 @@ try{for(const width of [1440,390,320]){
   assert.equal(await page.locator('[data-fiscal-invoice-rows] tbody tr').count(),2);assert.match(await page.locator('[data-fiscal-invoice-rows]').textContent(),/299,00 RSD/);
   await fiscal.locator('[name="pfrNumber"]').fill('7AF4D923-E3B30A31-903');await fiscal.locator('[name="issuedAt"]').fill(new Date(Date.now()-120000).toISOString().slice(0,16));
   await fiscal.locator('[name="reason"]').fill('Synthetic original fiscal document checked');await fiscal.locator('[name="confirmed"]').check();await fiscal.locator('[name="receipt"]').setInputFiles({name:'synthetic-fiscal.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4\nSYNTHETIC FORMAT FIXTURE')});
+  await fiscal.locator('[name="originalUnchanged"]').check();
+  const toggle=fiscal.locator('[data-fiscal-review-toggle]');assert.equal(await toggle.isChecked(),false);assert.equal(await fiscal.locator('[name="verificationUrl"]').isDisabled(),true);
+  await fiscal.locator('[name="deliveryMode"]').selectOption('minimax');assert.equal(await fiscal.locator('[name="receipt"]').getAttribute('required'),'');await fiscal.locator('[name="deliveryMode"]').selectOption('panel');
+  await toggle.check();await fiscal.locator('button[type="submit"]').click();assert.equal(h.sql.prepare('SELECT count(*) n FROM fiscal_documents').get().n,0,'An explicitly selected incomplete review must not be saved as verified');
+  if(width===1440){
+    const review=reviewFields();await fiscal.locator('[name="verificationUrl"]').fill(review.verificationUrl);await fiscal.locator('[name="verifiedTaxId"]').fill(review.verifiedTaxId);await fiscal.locator('[name="documentType"]').selectOption(review.documentType);for(const name of ['portalChecked','itemsChecked','paymentChecked'])await fiscal.locator('[name="'+name+'"]').check();
+  }else{
+    await fiscal.locator('[name="verificationUrl"]').fill('https://invalid.example/partial-review');await toggle.uncheck();assert.equal(await fiscal.locator('[name="verificationUrl"]').isDisabled(),true);
+  }
+  assert.ok(await page.locator('body').evaluate(el=>el.scrollWidth<=innerWidth+1),'Portal review form must fit the viewport');
+  if(process.env.QA_SCREENSHOT_DIR){fs.mkdirSync(process.env.QA_SCREENSHOT_DIR,{recursive:true});await fiscal.screenshot({path:process.env.QA_SCREENSHOT_DIR+'/fiscal-review-form-'+width+'.png'});}
+  // A tall-form screenshot can leave smooth scrolling active on narrow screens.
+  // Position the actual button immediately, then retain Playwright's normal click checks.
+  await fiscal.locator('button[type="submit"]').evaluate(el=>el.scrollIntoView({behavior:'instant',block:'center'}));
   h.state.email='error';await fiscal.locator('button[type="submit"]').click();await page.locator('[data-fiscal-panel]').getByText('Email čeka slanje',{exact:true}).waitFor();assert.equal(await shipping.locator('button[type="submit"]').isDisabled(),true);
   h.state.email='ok';await page.locator('[data-email-retry]').click();await page.locator('[data-fiscal-panel]').getByText('Email servis je prihvatio PDF',{exact:true}).waitFor();assert.equal(await shipping.locator('button[type="submit"]').isEnabled(),true);
+  assert.equal(Boolean((await h.get(id)).fiscalControl.sale.portalReview),width===1440);
+  if(width===390){
+    const late=page.locator('[data-review-only]');await late.locator('..').locator('summary').click();await late.locator('[data-fiscal-review-toggle]').check();const review=reviewFields();
+    await late.locator('[name="receipt"]').setInputFiles({name:'synthetic-fiscal.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4\nSYNTHETIC FORMAT FIXTURE')});
+    for(const key of ['verificationUrl','verifiedTaxId'])await late.locator('[name="'+key+'"]').fill(review[key]);await late.locator('[name="documentType"]').selectOption(review.documentType);
+    for(const key of ['portalChecked','itemsChecked','paymentChecked','originalUnchanged','confirmed'])await late.locator('[name="'+key+'"]').check();
+    await late.locator('[name="reason"]').fill('Synthetic optional review after recording');await late.locator('button[type="submit"]').click();await page.getByText('Ručno evidentirana',{exact:true}).waitFor();
+    assert.equal((await h.get(id)).fiscalControl.sale.portalReview.mode,'manual');
+  }
   assert.equal((await h.get(id)).status,'confirmed');assert.equal(h.state.emails.filter(e=>e.subject.startsWith('Fiskalni')).length,2,'One failed attempt and one same-key retry');
   if(process.env.QA_SCREENSHOT_DIR){fs.mkdirSync(process.env.QA_SCREENSHOT_DIR,{recursive:true});await page.locator('[data-admin-detail]').screenshot({path:process.env.QA_SCREENSHOT_DIR+'/first-sale-'+width+'.png'});}
   await shipping.locator('[name="courier"]').fill('Synthetic courier');await shipping.locator('[name="trackingNumber"]').fill('SYNTHETIC-903');await shipping.locator('button[type="submit"]').click();await page.getByRole('heading',{name:'Pošiljka je poslata'}).waitFor();
