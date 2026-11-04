@@ -1,4 +1,6 @@
-# Lična dostava Novi Sad — uplata na račun (Worker 4.7.2)
+# Lična dostava Novi Sad — uplata na račun
+
+Od 4.13.0 primenjuju se dodatne [kontrole platnog QR-a i originalnog fiskalnog dokumenta](PAYMENT-QR-FISCAL-CONTROLS.md): šifra 221 za nove maloprodajne instrukcije, zamrznuta polja pri potvrdi, očuvane ranije instrukcije, originalni PDF u oba načina dostave i obavezna evidencija ručne provere na zvaničnom portalu. Stari testovi ispod bez `FIRST_SALE_MODE` proveravaju osnovni lokalni tok; za prvi produkcioni režim merodavne su i kontrole iz FIRST-SALE-RUNBOOK.md.
 
 Odobrena lična dostava ostaje besplatna. Način plaćanja je `ips` (NBS IPS QR) ili `bank_transfer` (običan transfer), oba na postojeći račun firme. Gotovina se više ne bira u administratoru i serverski zahtev `method: cash` se odbija.
 

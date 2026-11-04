@@ -9,7 +9,7 @@ function regression(name,fn){test(name,fn);}
 regression('approval uses IPS, free shipping, identical transfer/QR fields and unpaid state',async()=>{
   const h=harness(),id=await h.add(),o=await h.get(id);
   assert.equal(o.payment,ips);assert.equal(o.shipping,0);assert.equal(o.total,598);assert.equal(o.operations.paymentStatus,'unpaid');
-  const b=o.bankTransfer;assert.equal(b.account,'265201031001135831');assert.equal(b.model,'00');assert.equal(b.amount,598);assert.equal(b.reference,'20261010');
+  const b=o.bankTransfer;assert.equal(b.account,'265201031001135831');assert.equal(b.model,'00');assert.equal(b.amount,598);assert.equal(b.reference,'AT-20261010-ABCD');assert.equal(b.paymentCode,'221');
   assert.equal((await h.call(id,'confirm',{})).status,200);
   const fields=h.state.qrRequests[0];assert.equal(fields.RO,b.model+b.reference);assert.equal(fields.S,b.purpose);assert.equal(fields.SF,b.paymentCode);assert.equal(fields.I,'RSD598,00');
   assert.equal((await h.get(id)).operations.paymentStatus,'unpaid');

@@ -1,6 +1,6 @@
-# Prva porudžbina — uputstvo 4.12.0
+# Prva porudžbina — uputstvo 4.13.0
 
-Primenjuje se posle odobrene objave, potvrđenih poslovnih preduslova i zasebnog otvaranja prodaje. Razvojne provere koriste sintetičke podatke; njima nije izdat stvarni račun, poslat mejl kupcu ili predata roba kuriru.
+Primenjuje se posle odobrene objave, potvrđenih poslovnih preduslova i zasebnog otvaranja prodaje. Razvojne provere koriste sintetičke podatke; njima nije izdat stvarni račun, poslat mejl kupcu ili predata roba kuriru. Od 4.13.0 obavezna je [arhiva originalnog PDF-a](PAYMENT-QR-FISCAL-CONTROLS.md), i za dokumente već poslate iz Minimax-a. Ručna provera na portalu Poreske uprave je opciona i nije uslov za isporuku; može se dodati naknadno, bez ponovnog izdavanja ili slanja računa.
 
 ## Pre početka
 
@@ -24,8 +24,8 @@ Zvanični izvori:
 2. Primljena porudžbina već jednom umanjuje kvotu. **Ne umanjivati je ponovo pri fiskalizaciji i ne prepisivati celo Minimax stanje preko nje.** Kod dopune proveriti sve neobrađene porudžbine i ostalu prodaju. Povrat robe/refundacija ne vraćaju kvotu automatski.
 3. U novoj porudžbini proveriti kupca, adresu/telefon, robu/pakete, sačuvanu cenu, dostavu i bezbednosne oznake. Potvrditi porudžbinu; kupcu odlazi postojeća potvrda sa prilozima. To nije fiskalni račun.
 4. Tabela „Priprema za unos u Minimax“ prikazuje fizičke artikle, količine i raspodeljene bruto cene paketa sa dve decimale, iz sačuvanog sastava i cene. To nije izdat dokument i ne preuzima aktuelni cenovnik. Operater u Minimax-u izdaje odgovarajući stvarni fiskalni dokument. Ne koristiti sedam probnih API nacrta za stvarnog kupca i ne izdavati stvarnu prodaju dok numeracija ostaje u Obuci. Proveriti PFR broj, vrstu, vreme, artikle/količine, način plaćanja, porez i ukupan iznos sa dostavom. Preuzeti originalni PDF; panel ga ne generiše i ne proverava preko Poreske uprave.
-5. U odeljku **Fiskalni račun** uneti PFR broj, stvarno vreme izdavanja, ukupno RSD, belešku o proveri i potvrdu. Email je iz porudžbine; obrazac ne može preusmeriti račun na drugu osobu.
-6. Izabrati **Pošalji originalni PDF iz panela** (PDF do 5 MB), ili **Već je poslat iz Minimax-a** (stvarno vreme slanja i provera primaoca/evidencije u Minimax-u). Drugi izbor je ručni zapis, ne nezavisna API provera.
+5. U odeljku **Fiskalni račun** uneti PFR broj, stvarno vreme izdavanja i ukupno RSD; uporediti originalni PDF sa porudžbinom. Za ličnu uplatu proveriti eventualni avans i konačni račun u Minimax-u. Email je iz porudžbine. Provera na portalu je opciona: po želji uključiti evidenciju i uneti verifikacioni link, PIB i potvrde poređenja. Preporučuje se za prve račune, nakon promena i kod sumnje; preskakanje ne blokira čuvanje ili isporuku.
+6. Priložiti **neizmenjeni originalni PDF do 5 MB** u oba načina dostave. Izabrati **Pošalji originalni PDF iz panela**, ili **Već je poslat iz Minimax-a** (stvarno vreme slanja i provera primaoca/evidencije u Minimax-u). Drugi izbor samo arhivira i evidentira, bez ponovnog slanja. Ne dodavati platni QR u originalni fiskalni PDF.
 7. Proveriti status. **Email servis je prihvatio PDF** znači prihvatanje servisa, ne dokaz inbox-a. **Slanje iz Minimax-a je ručno evidentirano** označava potvrdu operatera. Dok email čeka/ima grešku, predaja je blokirana. Ne izdavati drugi račun zbog greške slanja.
 8. Kurira zakazati kroz ugovoreni kanal, upakovati robu i uneti stvaran broj/link pošiljke. Tek po stvarnoj predaji kliknuti **Označi kao poslato i obavesti kupca**. Mejl o slanju ne dodaje ponovo fiskalni PDF. API zakazivanje kurira još nije aktivno.
 9. Za ličnu isporuku ostaju dogovor termina i provera bankarske uplate. Pratiti prijem novca od kurira i reference izvoda. „Poslato“ nije dokaz naplate.

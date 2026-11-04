@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 // Isolated D1-compatible SQLite transactions and synthetic external services only.
 const source = fs.readFileSync('worker/adriatic-trade-worker-v4.5.0.js', 'utf8').replace('export default', 'const worker =');
 const png = Uint8Array.from([137,80,78,71,13,10,26,10,0]);
-export const ips = 'Lična dostava — IPS na račun';
+export const ips = 'Lična dostava — uplata na račun (NBS IPS QR)';
 export const bank = 'Lična dostava — uplata na račun';
 export const cash = 'Lična dostava — gotovina';
 export const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Belgrade', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());

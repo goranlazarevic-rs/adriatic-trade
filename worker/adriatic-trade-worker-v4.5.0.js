@@ -73,8 +73,11 @@ const WITHDRAWAL_FORM_URL = "https://adriatictrade.rs/dokumenti/adriatic-trade-o
 const IPS_ACCOUNT = "265201031001135831";
 const IPS_PAYEE = "ADRIATIC TRADE DOO\r\nCVETNA 6\r\nSREMSKA KAMENICA";
 const IPS_GENERATOR_URL = "https://nbs.rs/QRcode/api/qr/v1/gen/500?lang=sr_RS_Latn";
-const LOCAL_PAYMENT_IPS = "Lična dostava — IPS na račun";
+const LOCAL_PAYMENT_IPS = "Lična dostava — uplata na račun (NBS IPS QR)";
+const LEGACY_LOCAL_PAYMENT_IPS = "Lična dostava — IPS na račun";
 const LOCAL_PAYMENT_BANK = "Lična dostava — uplata na račun";
+const FISCAL_TAXPAYER_ID = "115051176";
+const FISCAL_REVIEW_VERSION = "manual-portal-v1";
 const IPS_TIMEOUT_MS = 5000;
 
 const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
@@ -118,8 +121,10 @@ export default {
       return json({
         ok: true,
         service: "Adriatic Trade Orders",
-        version: "4.12.0",
+        version: "4.13.0",
         firstSaleFiscal: firstSaleEnabled(env),
+        fiscalReview: FISCAL_REVIEW_VERSION,
+        paymentQr: "retail-221-v1",
         status: "ready",
         database: Boolean(env.DB),
         receipts: Boolean(env.RECEIPTS),
@@ -150,6 +155,11 @@ export default {
     if (url.pathname === "/order") {
       if (request.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405, origin);
       return handleCreateOrder(request, env, origin);
+    }
+
+    if (url.pathname === '/archive/fiscal' || url.pathname.startsWith('/archive/fiscal/')) {
+      try { return await handleFiscalArchive(request, env, url); }
+      catch { return new Response(JSON.stringify({ok:false,error:'Arhiva trenutno nije dostupna.'}), {status:503,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}}); }
     }
 
     if (url.pathname.startsWith("/admin/")) {
@@ -416,7 +426,7 @@ async function handleAdmin(request, env, url, origin) {
     return json({ ok: true, orders: (result.results || []).map(rowToOrder) }, 200, origin);
   }
 
-  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry|minimax-draft|fiscal))?$/);
+  const match = url.pathname.match(/^\/admin\/orders\/([^/]+)(?:\/(confirm|ship|reject|cancel|receipt|operations|local-delivery|local-payment|local-schedule|local-delivered|ips-qr|email-retry|minimax-draft|fiscal|fiscal-review))?$/);
   if (!match) return json({ ok: false, error: "Not found" }, 404, origin);
 
   const orderId = decodeURIComponent(match[1]);
@@ -431,6 +441,7 @@ async function handleAdmin(request, env, url, origin) {
   }
 
   if (action === "fiscal") return handleFiscal(request,env,order,origin);
+  if (action === "fiscal-review") return handleFiscalReview(request,env,order,origin);
   if(firstSaleEnabled(env)&&order.fiscalControl?.sale&&request.method==='POST'&&action==='local-payment')return json({ok:false,error:'Način plaćanja je vezan za evidentirani fiskalni račun. Potrebna je provera pre izmene.'},409,origin);
 
   if (request.method === "POST" && action === "email-retry") {
@@ -488,7 +499,7 @@ async function handleAdmin(request, env, url, origin) {
   }
 
   if (request.method === "GET" && action === "ips-qr") {
-    if (!isApprovedLocalDelivery(order) || order.payment !== LOCAL_PAYMENT_IPS) {
+    if (!isApprovedLocalDelivery(order) || !isIpsLocalPayment(order)) {
       return json({ ok: false, error: "IPS QR je dostupan samo za odobrenu lokalnu dostavu sa IPS plaćanjem." }, 409, origin);
     }
     const qr = await generateIpsQr(order);
@@ -715,7 +726,7 @@ async function handleAdmin(request, env, url, origin) {
       return json({ ok: false, error: "Prvo izaberite IPS ili uplatu na račun. Gotovina nije dostupna za ličnu dostavu." }, 409, origin);
     }
     let qrAttached = false;
-    if (order.payment === LOCAL_PAYMENT_IPS) {
+    if (isIpsLocalPayment(order)) {
       const qr = await generateIpsQr(order);
       if (qr.ok) {
         attachments.push({ filename: `IPS-${order.id}.png`, content: arrayBufferToBase64(qr.buffer) });
@@ -742,7 +753,9 @@ async function handleAdmin(request, env, url, origin) {
       env.DB.prepare("UPDATE orders SET status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ? AND status='new' AND payment=? AND total=?")
         .bind(now, now, order.id, order.payment, order.total),
       env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?, 'confirmed', ?, ? WHERE changes()=1")
-        .bind(order.id, confirmationNote, now)
+        .bind(order.id, confirmationNote, now),
+      ...(isBankLocalPayment(order) ? [env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) SELECT ?,'payment_instructions',?,? WHERE changes()=1")
+        .bind(order.id,JSON.stringify(ipsFields(order)),now)] : [])
     ], payload);
     if (!results[0].meta.changes) return json({ ok: false, error: "Porudžbina je u međuvremenu promenjena. Osvežite prikaz." }, 409, origin);
     return notificationResponse(env, order.id, origin);
@@ -1327,7 +1340,7 @@ function statusConfirmedEmailHtml(order, qrAttached = false) {
   const paymentNotice = isBankLocalPayment(order)
     ? `<div style="margin-top:18px;padding:16px 18px;background:#eef5f8;border:1px solid #d9e7ec;border-radius:12px;color:#40545f;font-size:14px;line-height:1.6;">
         <strong>Uplata na račun za besplatnu ličnu dostavu</strong>
-        ${qrAttached ? `<p>U prilogu je PNG slika NBS IPS QR koda. Skenirajte je ili je uvezite iz galerije u aplikaciji svoje banke.</p>` : order.payment === LOCAL_PAYMENT_IPS ? `<p>IPS QR trenutno nije dostupan. Uplatu izvršite običnim bankarskim transferom prema sledećim instrukcijama.</p>` : ""}
+        ${qrAttached ? `<p>U prilogu je PNG slika NBS IPS QR koda. Skenirajte je ili je uvezite iz galerije u aplikaciji svoje banke. Pre potvrde proverite primaoca, račun, iznos i poziv na broj prema instrukcijama ispod.</p><p>Ovo su instrukcije za uplatu na račun. NBS IPS QR nije fiskalni račun niti potvrda izvršene uplate. Fiskalni dokument dostavljamo zasebno.</p>` : isIpsLocalPayment(order) ? `<p>IPS QR trenutno nije dostupan. Uplatu izvršite običnim bankarskim transferom prema sledećim instrukcijama.</p>` : ""}
         ${bankTransferEmailHtml(order)}
       </div>`
     : `<div style="margin-top:18px;padding:16px 18px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:14px;line-height:1.6;">Obavestićemo vas čim pošiljku preuzme kurirska služba. Plaćanje ostaje <strong>pouzećem</strong>.</div>`;
@@ -1521,8 +1534,9 @@ function isApprovedLocalDelivery(order) {
 }
 
 function isBankLocalPayment(order) {
-  return [LOCAL_PAYMENT_IPS, LOCAL_PAYMENT_BANK].includes(order.payment);
+  return isIpsLocalPayment(order) || order.payment === LOCAL_PAYMENT_BANK;
 }
+function isIpsLocalPayment(order) { return [LOCAL_PAYMENT_IPS,LEGACY_LOCAL_PAYMENT_IPS].includes(order.payment); }
 
 function bankTransferDetails(order) {
   const fields = ipsFields(order);
@@ -1557,7 +1571,7 @@ function verifiedBankPayment(order, body) {
   return { ok: true, data: { remittanceDate, paymentReference, paymentMethod: "bank_transfer", paymentVerifiedAt: new Date().toISOString() } };
 }
 
-function ipsReference(orderId) {
+function legacyIpsReference(orderId) {
   const digits = String(orderId || "").replace(/\D/g, "");
   if (digits) return `00${digits.slice(-18)}`;
   let hash = 2166136261;
@@ -1565,17 +1579,39 @@ function ipsReference(orderId) {
   return `00${String(hash).padStart(10, "0")}`;
 }
 
+function ipsReference(orderId) {
+  // Keep existing numeric references; preserve letters in legacy/new alphanumeric IDs.
+  // No lossy truncation or stripping: a reference identifies the complete order ID.
+  const id=String(orderId||'');
+  if(/^AT-\d{8}-\d{6}$/.test(id))return '00'+id.replace(/\D/g,'');
+  if(!/^[A-Za-z0-9-]{1,23}$/.test(id))throw new Error('Unsupported payment reference');
+  return '00'+id;
+}
+
 function ipsFields(order) {
+  const cents=mmCents(order.total);
+  mmDemand(cents>0&&cents<=30000000,'INVALID_PAYMENT_AMOUNT');
+  const amount=`RSD${Math.floor(cents/100)},${String(cents%100).padStart(2,'0')}`;
+  const saved=(order.events||[]).find(e=>e.event_type==='payment_instructions');
+  if(saved){
+    const fields=JSON.parse(saved.note);
+    if(fields.R!==IPS_ACCOUNT||fields.N!==IPS_PAYEE||fields.I!==amount||
+      fields.K!=='PR'||fields.V!=='01'||fields.C!=='1'||!['221','289'].includes(fields.SF)||!/^00[A-Za-z0-9-]{1,23}$/.test(fields.RO)||
+      typeof fields.S!=='string'||fields.S.length>35)throw new Error('Payment instructions changed');
+    return fields;
+  }
+  // Instructions already sent before this release stay valid and unchanged.
+  const legacy=order.status!=='new'&&(order.events||[]).some(e=>e.event_type==='confirmed'||e.event_type==='local_payment_changed');
   return {
     K: "PR",
     V: "01",
     C: "1",
     R: IPS_ACCOUNT,
     N: IPS_PAYEE,
-    I: `RSD${Number(order.total || 0).toFixed(2).replace(".", ",")}`,
-    SF: "289",
+    I: amount,
+    SF: legacy ? "289" : "221",
     S: `PORUDZBINA ${String(order.id || "").slice(-23)}`.slice(0, 35),
-    RO: ipsReference(order.id)
+    RO: legacy ? legacyIpsReference(order.id) : ipsReference(order.id)
   };
 }
 
@@ -2688,6 +2724,47 @@ async function mmHandleProbeOrder(request,env,url,origin) {
 // Manual first-sale evidence in the standalone Worker,
 // not an ESIR adapter: no invoice issuance or authenticity verification here.
 function firstSaleEnabled(env) { return env?.FIRST_SALE_MODE === 'manual-minimax'; }
+function fiscalStorageKey(orderId, filename, issuedAt) {
+  const day=belgradeDateKey(new Date(issuedAt));
+  return `fiscal/${day.slice(0,4)}/${day.slice(5,7)}/${orderId}/${crypto.randomUUID()}-${filename}`;
+}
+
+// A separate, revocable read-only credential; it never authorizes /admin routes.
+// Full inventory each run lets a downloader retry late additions and missing files.
+async function handleFiscalArchive(request, env, url) {
+  const headers={'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
+  const reply=(body,status=200)=>new Response(JSON.stringify(body),{status,headers});
+  const expected=String(env.FISCAL_ARCHIVE_TOKEN||'');
+  const auth=request.headers.get('Authorization')||'';
+  if(expected.length<32||expected===env.ADMIN_TOKEN||!auth.startsWith('Bearer ')||!constantTimeEqual(auth.slice(7),expected))
+    return reply({ok:false,error:'Neispravan pristup arhivi.'},401);
+  if(request.method!=='GET')return reply({ok:false,error:'Arhiva dozvoljava samo preuzimanje.'},405);
+  if(!env.DB||!env.RECEIPTS)return reply({ok:false,error:'Arhiva nije povezana.'},503);
+  const schema=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fiscal_documents'").first();
+  if(!schema)return reply({ok:false,error:'Fiskalna evidencija još nije pripremljena.'},503);
+  if(url.pathname==='/archive/fiscal') {
+    const cursor=url.searchParams.get('after')||'';
+    if(cursor&&!/^[a-f0-9-]{36}$/i.test(cursor))return reply({ok:false,error:'Neispravna strana arhive.'},400);
+    const rows=(await env.DB.prepare(`SELECT operation_id,order_id,pfr_number,kind,issued_at,pdf_filename,pdf_hash
+      FROM fiscal_documents WHERE operation_id>? AND pdf_key IS NOT NULL AND pdf_hash IS NOT NULL
+      ORDER BY operation_id LIMIT 101`).bind(cursor).all()).results||[];
+    const incomplete=await env.DB.prepare('SELECT count(*) n FROM fiscal_documents WHERE pdf_key IS NULL OR pdf_hash IS NULL').first();
+    const legacy=await env.DB.prepare(`SELECT count(*) n FROM orders o WHERE o.receipt_key IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM fiscal_documents f WHERE f.pdf_key=o.receipt_key)`).first();
+    const page=rows.slice(0,100);
+    return reply({ok:true,version:1,documents:page.map(r=>({id:r.operation_id,orderId:r.order_id,pfrNumber:r.pfr_number,
+      kind:r.kind,issuedAt:r.issued_at,originalFilename:r.pdf_filename,sha256:r.pdf_hash})),
+      next:rows.length>100?page.at(-1).operation_id:null,incomplete:Number(incomplete.n),legacy:Number(legacy.n)});
+  }
+  const id=url.pathname.slice('/archive/fiscal/'.length);
+  if(!/^[a-f0-9-]{36}$/i.test(id))return reply({ok:false,error:'Dokument nije pronađen.'},404);
+  const doc=await env.DB.prepare('SELECT pdf_key,pdf_hash FROM fiscal_documents WHERE operation_id=?').bind(id).first();
+  if(!doc?.pdf_key||!doc.pdf_hash)return reply({ok:false,error:'Original nije arhiviran.'},404);
+  const object=await env.RECEIPTS.get(doc.pdf_key);
+  if(!object)return reply({ok:false,error:'Original nedostaje u arhivi.'},503);
+  return new Response(object.body,{headers:{...headers,'Content-Type':'application/pdf',
+    'Content-Disposition':`attachment; filename="${id}.pdf"`,'X-Content-SHA256':doc.pdf_hash}});
+}
 async function ensureFiscalSchema(db) {
   await db.prepare('CREATE TABLE IF NOT EXISTS fiscal_cas_assert(ok INTEGER CHECK(ok=1))').run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS fiscal_documents (
@@ -2702,6 +2779,12 @@ async function ensureFiscalSchema(db) {
     source_goods REAL NOT NULL, source_shipping REAL NOT NULL, source_total REAL NOT NULL,
     created_at TEXT NOT NULL, UNIQUE(order_id,kind)
   )`).run();
+  await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS fiscal_documents_pdf_hash ON fiscal_documents(pdf_hash) WHERE pdf_hash IS NOT NULL').run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS fiscal_reviews (
+    pfr_key TEXT PRIMARY KEY, pdf_hash TEXT NOT NULL UNIQUE, verification_url TEXT NOT NULL,
+    taxpayer_id TEXT NOT NULL, document_type TEXT NOT NULL, verified_at TEXT NOT NULL,
+    reason TEXT NOT NULL, checks_json TEXT NOT NULL, version TEXT NOT NULL
+  )`).run();
 }
 function fiscalPfr(value) {
   if (typeof value !== 'string' || value.length > 160) return null;
@@ -2715,6 +2798,7 @@ function fiscalDate(value) {
 }
 function fiscalGuard() {
   return `EXISTS(SELECT 1 FROM fiscal_documents f WHERE f.order_id=orders.id AND f.kind='sale'
+    AND f.pdf_key IS NOT NULL AND f.pdf_hash IS NOT NULL
     AND f.source_items=orders.items_json AND f.source_email=orders.customer_email AND f.source_payment=orders.payment
     AND f.source_goods=orders.goods_total AND f.source_shipping=orders.shipping AND f.source_total=orders.total
     AND (f.delivery_mode='minimax' OR EXISTS(SELECT 1 FROM notification_outbox n WHERE n.operation_key=f.notification_key AND n.status='sent')))
@@ -2741,14 +2825,16 @@ function firstSaleInvoiceRows(order) {
 }
 async function fiscalView(db,order) {
   await ensureFiscalSchema(db);
-  const rows=await db.prepare(`SELECT f.*,n.status email_status FROM fiscal_documents f
-    LEFT JOIN notification_outbox n ON n.operation_key=f.notification_key WHERE f.order_id=? ORDER BY f.kind`).bind(order.id).all();
-  const view={required:true,sale:null,refund:null,ready:false,invoiceRows:[],preparationError:null};
+  const rows=await db.prepare(`SELECT f.*,n.status email_status,r.verified_at,r.verification_url,r.pdf_hash review_hash FROM fiscal_documents f
+    LEFT JOIN notification_outbox n ON n.operation_key=f.notification_key LEFT JOIN fiscal_reviews r ON r.pfr_key=f.pfr_key
+    WHERE f.order_id=? ORDER BY f.kind`).bind(order.id).all();
+  const view={required:true,sale:null,refund:null,ready:false,invoiceRows:[],preparationError:null,taxpayerId:FISCAL_TAXPAYER_ID};
   try{view.invoiceRows=firstSaleInvoiceRows(order);}catch{view.preparationError='Sačuvane stavke, sastav paketa ili iznosi nisu usklađeni. Potrebna je provera porudžbine.';}
   for(const f of rows.results||[]) view[f.kind]={pfrNumber:f.pfr_number,issuedAt:f.issued_at,amount:f.gross_cents/100,
     deliveryMode:f.delivery_mode,deliveryStatus:f.delivery_mode==='minimax'?'manually_recorded':f.email_status==='sent'?'accepted':f.email_status||'missing',
     deliveredAt:f.delivered_at,recipient:f.recipient,pdfFilename:f.pdf_filename||null,
-    evidence:'operator_attestation',originalPfr:f.original_key};
+    evidence:'operator_attestation',originalPfr:f.original_key,
+    portalReview:f.review_hash===f.pdf_hash&&Boolean(f.pdf_hash)?{mode:'manual',verifiedAt:f.verified_at,url:f.verification_url}:null};
   const ready=await db.prepare(`SELECT id FROM orders WHERE id=? AND ${fiscalGuard()}`).bind(order.id).first();
   view.ready=Boolean(ready)&&!view.preparationError;return view;
 }
@@ -2756,7 +2842,82 @@ async function fiscalReadyError(env,order) {
   if(!firstSaleEnabled(env))return null;
   const state=await fiscalView(env.DB,order);
   return state.ready?null:state.refund?'Evidentirana je refundacija. Pošiljka ne može biti poslata.':
-    'Prvo povežite izdat fiskalni račun i potvrdite slanje kupcu. Proverite iznos, podatke porudžbine i status emaila.';
+    'Prvo povežite originalni fiskalni PDF i potvrdite slanje kupcu.';
+}
+
+const FISCAL_REVIEW_FIELDS=['verificationUrl','verifiedTaxId','documentType','portalChecked','itemsChecked','originalUnchanged','paymentChecked','advanceResolved'];
+function fiscalReviewRequested(form) {
+  return ['verificationUrl','verifiedTaxId','documentType','portalChecked','itemsChecked','paymentChecked'].some(k=>form.has(k));
+}
+function fiscalReviewEvidence(form,order,kind) {
+  const raw=form.get('verificationUrl');let url;
+  if(typeof raw!=='string'||raw.length>4096||/[\u0000-\u0020\u007f]/.test(raw.trim()))return null;
+  try{url=new URL(raw.trim());}catch{return null;}
+  const vl=url.searchParams.get('vl');
+  // Only the production verification link copied from the ORIGINAL invoice.
+  // This validates the destination, NOT the fiscal signature or portal result.
+  if(url.protocol!=='https:'||url.hostname!=='suf.purs.gov.rs'||url.port||url.username||url.password||url.hash||
+    !['/v/','/v'].includes(url.pathname)||url.searchParams.getAll('vl').length!==1||
+    [...url.searchParams.keys()].some(k=>k!=='vl')||typeof vl!=='string'||vl.length<100||!/^[A-Za-z0-9+/= ]+$/.test(vl))return null;
+  if(form.get('verifiedTaxId')!==FISCAL_TAXPAYER_ID||form.get('documentType')!=='normal-'+kind||
+    ['portalChecked','itemsChecked','originalUnchanged','paymentChecked'].some(k=>form.get(k)!=='yes')||
+    (isBankLocalPayment(order)&&form.get('advanceResolved')!=='yes'))return null;
+  const checks={portalChecked:true,itemsChecked:true,originalUnchanged:true,paymentChecked:true,
+    advanceResolved:isBankLocalPayment(order)?true:null};
+  return {url:url.href,taxpayerId:FISCAL_TAXPAYER_ID,documentType:'normal-'+kind,checks,version:FISCAL_REVIEW_VERSION};
+}
+function fiscalReviewStatement(db,pfr,pdfHash,evidence,now,reason) {
+  return db.prepare('INSERT INTO fiscal_reviews VALUES(?,?,?,?,?,?,?,?,?)').bind(pfr,pdfHash,evidence.url,evidence.taxpayerId,
+    evidence.documentType,now,reason,JSON.stringify(evidence.checks),evidence.version);
+}
+async function fiscalPdf(file) {
+  if(!file||typeof file.arrayBuffer!=='function'||!file.size)throw new Error('ORIGINAL_PDF_REQUIRED');
+  if(file.size>5*1024*1024||!file.name.toLowerCase().endsWith('.pdf')||(file.type&&file.type!=='application/pdf'))throw new Error('INVALID_PDF');
+  const buffer=await file.arrayBuffer(),bytes=new Uint8Array(buffer);
+  if(![37,80,68,70,45].every((v,i)=>bytes[i]===v))throw new Error('INVALID_PDF');
+  return {buffer,hash:[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(n=>n.toString(16).padStart(2,'0')).join(''),filename:safePdfFilename(file.name)};
+}
+async function handleFiscalReview(request,env,order,origin) {
+  const fail=(error,status=400)=>json({ok:false,error},status,origin);
+  if(!firstSaleEnabled(env)||request.method!=='POST')return fail('Provera nije dostupna.',405);
+  let form;try{form=await fiscalForm(request);}catch{return fail('Priložite originalni PDF do 5 MB.',413);}
+  const allowed=['operationId','revision','kind','pfrNumber','originalPfr','receipt','reason','confirmed',...FISCAL_REVIEW_FIELDS];
+  if([...form.keys()].some(k=>!allowed.includes(k)||form.getAll(k).length!==1))return fail('Nepoznata ili ponovljena polja provere.');
+  const kind=form.get('kind'),pfr=fiscalPfr(form.get('pfrNumber')),reason=form.get('reason');
+  if(!pfr||!['sale','refund'].includes(kind)||form.get('confirmed')!=='yes'||typeof reason!=='string'||reason.trim().length<5||reason.length>500)return fail('Proverite fiskalni dokument i unesite belešku.');
+  await ensureFiscalSchema(env.DB);
+  const doc=await env.DB.prepare('SELECT * FROM fiscal_documents WHERE order_id=? AND pfr_key=? AND kind=?').bind(order.id,pfr.toUpperCase(),kind).first();
+  if(!doc)return fail('Dopuna provere odnosi se samo na već povezani fiskalni dokument.',404);
+  if(form.get('originalUnchanged')!=='yes'||(isBankLocalPayment(order)&&form.get('advanceResolved')!=='yes'))return fail('Potvrdite neizmenjeni originalni PDF i postupanje sa eventualnim avansom.');
+  const evidence=fiscalReviewRequested(form)?fiscalReviewEvidence(form,order,kind):null;
+  if(fiscalReviewRequested(form)&&!evidence)return fail('Dovršite izabranu proveru na portalu ili je isključite.');
+  let pdf;try{pdf=await fiscalPdf(form.get('receipt'));}catch{return fail('Priložite neizmenjeni originalni fiskalni PDF do 5 MB.');}
+  if(doc.pdf_hash&&doc.pdf_hash!==pdf.hash)return fail('PDF se razlikuje od već arhiviranog originala. Dokument se ne prepisuje.',409);
+  const old=await env.DB.prepare('SELECT * FROM fiscal_reviews WHERE pfr_key=?').bind(doc.pfr_key).first();
+  if(old)return old.pdf_hash===pdf.hash&&(!evidence||(old.verification_url===evidence.url&&old.reason===reason.trim()))
+    ?json({ok:true,duplicate:true,order:await getOrderById(env.DB,order.id,env)},200,origin):fail('Provera je već sačuvana i ne može se prepisati.',409);
+  if(!evidence&&doc.pdf_key&&doc.pdf_hash===pdf.hash)return json({ok:true,duplicate:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
+  if(String(order.operationsRevision)!==form.get('revision'))return fail('Porudžbina je promenjena. Osvežite prikaz.',409);
+  if(await env.DB.prepare('SELECT pfr_key FROM fiscal_documents WHERE pdf_hash=? AND pfr_key<>? UNION ALL SELECT pfr_key FROM fiscal_reviews WHERE pdf_hash=? LIMIT 1').bind(pdf.hash,doc.pfr_key,pdf.hash).first())return fail('Isti PDF je već povezan sa drugim dokumentom.',409);
+  if(!env.RECEIPTS)return fail('Arhiva originalnih dokumenata nije dostupna.',503);
+  const now=new Date().toISOString(),key=doc.pdf_key||fiscalStorageKey(order.id,pdf.filename,doc.issued_at);
+  if(!doc.pdf_key)await env.RECEIPTS.put(key,pdf.buffer,{httpMetadata:{contentType:'application/pdf'},customMetadata:{orderId:order.id}});
+  try{await env.DB.batch([
+    env.DB.prepare(`UPDATE fiscal_documents SET pdf_key=COALESCE(pdf_key,?),pdf_filename=COALESCE(pdf_filename,?),pdf_hash=COALESCE(pdf_hash,?)
+      WHERE pfr_key=? AND (pdf_hash IS NULL OR pdf_hash=?) AND EXISTS(SELECT 1 FROM order_operations WHERE order_id=? AND revision=?)`)
+      .bind(key,pdf.filename,pdf.hash,doc.pfr_key,pdf.hash,order.id,order.operationsRevision),
+    env.DB.prepare('INSERT INTO fiscal_cas_assert(ok) SELECT changes()'),env.DB.prepare('DELETE FROM fiscal_cas_assert'),
+    ...(evidence?[fiscalReviewStatement(env.DB,doc.pfr_key,pdf.hash,evidence,now,reason.trim())]:[]),
+    ...(kind==='sale'?[env.DB.prepare("UPDATE orders SET receipt_key=?,receipt_filename=? WHERE id=?").bind(key,doc.pdf_filename||pdf.filename,order.id)]:[]),
+    env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES(?,?,?,?)")
+      .bind(order.id,evidence?'fiscal_reviewed':'fiscal_pdf_archived',`Administrator · ${evidence?'Dopunjena ručna provera na portalu Poreske uprave; PIB '+FISCAL_TAXPAYER_ID:'Provera na portalu nije evidentirana (opciono)'}; ${pfr}; originalni PDF arhiviran. Bez novog izdavanja ili slanja računa.`,now)
+  ]);}catch{
+    if(!doc.pdf_key)await env.RECEIPTS.delete(key).catch(()=>{});
+    const committed=await env.DB.prepare('SELECT * FROM fiscal_reviews WHERE pfr_key=?').bind(doc.pfr_key).first();
+    if(evidence&&committed&&committed.pdf_hash===pdf.hash&&committed.verification_url===evidence.url&&committed.reason===reason.trim())return json({ok:true,duplicate:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
+    return fail('Podaci su promenjeni ili je PDF već povezan. Provera nije upisana; osvežite prikaz.',409);
+  }
+  return json({ok:true,order:await getOrderById(env.DB,order.id,env)},200,origin);
 }
 async function fiscalForm(request) {
   const type=request.headers.get('Content-Type')||'';
@@ -2773,7 +2934,7 @@ async function handleFiscal(request,env,order,origin) {
   if(order.fiscalControl?.preparationError)return fail(order.fiscalControl.preparationError,409);
   if(request.method!=='POST')return fail('Dozvoljen je samo upis fiskalne evidencije.',405);
   let form;try{form=await fiscalForm(request);}catch(e){return fail('Očekivan je fiskalni obrazac sa PDF-om do 5 MB.',e.message==='FISCAL_FORM_TOO_LARGE'?413:400);}
-  const allowed=['operationId','revision','kind','pfrNumber','originalPfr','issuedAt','amount','deliveryMode','deliveredAt','recipient','reason','confirmed','receipt'];
+  const allowed=['operationId','revision','kind','pfrNumber','originalPfr','issuedAt','amount','deliveryMode','deliveredAt','recipient','reason','confirmed','receipt',...FISCAL_REVIEW_FIELDS];
   if([...form.keys()].some(k=>!allowed.includes(k)||form.getAll(k).length!==1))return fail('Nepoznata ili ponovljena polja obrasca.');
   const operationId=form.get('operationId'),kind=form.get('kind'),pfr=fiscalPfr(form.get('pfrNumber')),
     issuedAt=fiscalDate(form.get('issuedAt')),mode=form.get('deliveryMode'),recipient=form.get('recipient'),reason=form.get('reason');
@@ -2793,18 +2954,18 @@ async function handleFiscal(request,env,order,origin) {
   await ensureFiscalSchema(env.DB);
   const sale=await env.DB.prepare("SELECT * FROM fiscal_documents WHERE order_id=? AND kind='sale'").bind(order.id).first();
   if(kind==='refund'&&(!sale||original!==sale.pfr_key||pfrKey===original||issuedAt<sale.issued_at))return fail('Puna refundacija mora se pozvati na originalni PFR broj prodaje.');
-  const file=form.get('receipt');let buffer=null,pdfHash=null,filename=null;
-  if(file&&typeof file.arrayBuffer==='function'&&file.size>0){
-    if(file.size>5*1024*1024||!file.name.toLowerCase().endsWith('.pdf')||(file.type&&file.type!=='application/pdf'))return fail('Priložite originalni PDF do 5 MB.',413);
-    buffer=await file.arrayBuffer();const b=new Uint8Array(buffer);
-    if(!(b[0]===37&&b[1]===80&&b[2]===68&&b[3]===70))return fail('Dokument nije PDF.');
-    pdfHash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(n=>n.toString(16).padStart(2,'0')).join('');filename=safePdfFilename(file.name);
-  }
-  if(mode==='panel'&&!buffer)return fail('Za slanje iz panela potreban je originalni fiskalni PDF.');
-  const canonical=JSON.stringify({orderId:order.id,kind,pfr,original,issuedAt,cents,mode,deliveredAt,recipient,reason:reason.trim(),pdfHash});
+  if(form.get('originalUnchanged')!=='yes'||(isBankLocalPayment(order)&&form.get('advanceResolved')!=='yes'))return fail('Potvrdite neizmenjeni originalni PDF i, za uplatu na račun, postupanje sa eventualnim avansom u Minimax-u.');
+  const reviewRequested=fiscalReviewRequested(form);
+  const evidence=reviewRequested?fiscalReviewEvidence(form,order,kind):null;
+  if(reviewRequested&&!evidence)return fail('Dovršite izabranu ručnu proveru na portalu ili je isključite. Potrebni su produkcioni link, tačan PIB i sve potvrde.');
+  let pdf;try{pdf=await fiscalPdf(form.get('receipt'));}catch{return fail('Priložite neizmenjeni originalni fiskalni PDF do 5 MB, i kada je račun već poslat iz Minimax-a.');}
+  const {buffer,hash:pdfHash,filename}=pdf;
+  const canonical=JSON.stringify({orderId:order.id,kind,pfr,original,issuedAt,cents,mode,deliveredAt,recipient,reason:reason.trim(),pdfHash,evidence});
   const requestHash=await availabilityHash(canonical);
   const old=await env.DB.prepare('SELECT * FROM fiscal_documents WHERE operation_id=?').bind(operationId).first();
   if(old)return old.order_id===order.id&&old.request_hash===requestHash?notificationResponse(env,order.id,origin,true):fail('ID zahteva je već iskorišćen za druge podatke.',409,'FISCAL_OPERATION_CONFLICT');
+  if(await env.DB.prepare('SELECT pfr_key FROM fiscal_documents WHERE pdf_hash=? UNION ALL SELECT pfr_key FROM fiscal_reviews WHERE pdf_hash=? LIMIT 1').bind(pdfHash,pdfHash).first())
+    return fail('Ovaj originalni PDF je već povezan sa fiskalnim dokumentom. Ne koristite isti PDF za drugi račun ili refundaciju.',409,'DUPLICATE_FISCAL_PDF');
   if(!['confirmed',...(kind==='refund'?['shipped']:[])].includes(order.status))return fail('Prvo potvrdite porudžbinu; račun se ne evidentira za odbijenu ili otkazanu porudžbinu.',409);
   if(String(order.operationsRevision)!==form.get('revision'))return fail('Porudžbina je promenjena. Osvežite prikaz.',409,'STALE_FISCAL_ORDER');
   if(await env.DB.prepare("SELECT order_id FROM order_operations WHERE order_id<>? AND upper(replace(json_extract(data_json,'$.fiscalNumber'),' ',''))=?").bind(order.id,pfrKey).first())return fail('PFR broj je već u istorijskoj operativnoj evidenciji druge porudžbine.',409,'DUPLICATE_FISCAL_NUMBER');
@@ -2813,11 +2974,12 @@ async function handleFiscal(request,env,order,origin) {
   const current=rowToOrder(raw);
   if(current.status!==order.status||JSON.stringify(current.items)!==JSON.stringify(order.items)||current.customer.email!==recipient||current.payment!==order.payment||current.total!==order.total||current.shipping!==order.shipping||current.goodsTotal!==order.goodsTotal)return fail('Porudžbina je promenjena. Osvežite prikaz.',409,'STALE_FISCAL_ORDER');
   if(kind==='refund'&&(sale.source_items!==raw.items_json||sale.source_email!==recipient||sale.source_payment!==order.payment||sale.source_total!==order.total||sale.source_goods!==order.goodsTotal||sale.source_shipping!==order.shipping))return fail('Originalna fiskalizovana porudžbina je izmenjena. Potrebna je ručna provera.',409);
-  const now=new Date().toISOString(),key=buffer?`fiscal/${order.id}/${crypto.randomUUID()}-${filename}`:null,
+  const now=new Date().toISOString(),key=buffer?fiscalStorageKey(order.id,filename,issuedAt):null,
     notificationKey=mode==='panel'?`fiscal-mail/${operationId}`:null;
   if(buffer){if(!env.RECEIPTS)return fail('Skladište PDF dokumenata nije povezano.',503);await env.RECEIPTS.put(key,buffer,{httpMetadata:{contentType:'application/pdf'},customMetadata:{orderId:order.id}});}
   const values=[pfrKey,pfr,order.id,kind,original,operationId,requestHash,issuedAt,cents,mode,deliveredAt,recipient,notificationKey,key,filename,pdfHash,reason.trim(),raw.items_json,recipient,order.payment,order.goodsTotal,order.shipping,order.total,now];
-  const statements=[env.DB.prepare(`INSERT INTO fiscal_documents VALUES(${values.map(()=>'?').join(',')})`).bind(...values)];
+  const statements=[env.DB.prepare(`INSERT INTO fiscal_documents VALUES(${values.map(()=>'?').join(',')})`).bind(...values),
+    ...(evidence?[fiscalReviewStatement(env.DB,pfrKey,pdfHash,evidence,now,reason.trim())]:[])];
   // A failed source/revision CAS aborts the entire batch, including the unique claim.
   statements.push(env.DB.prepare(`UPDATE orders SET updated_at=?,receipt_key=CASE WHEN ?='sale' THEN ? ELSE receipt_key END,
     receipt_filename=CASE WHEN ?='sale' THEN ? ELSE receipt_filename END WHERE id=? AND status=? AND payment=? AND customer_email=?
@@ -2828,7 +2990,7 @@ async function handleFiscal(request,env,order,origin) {
   statements.push(env.DB.prepare(`INSERT INTO fiscal_cas_assert(ok) SELECT changes()`));
   statements.push(env.DB.prepare('DELETE FROM fiscal_cas_assert'));
   statements.push(env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES(?,'fiscal_recorded',?,?)")
-    .bind(order.id,`Administrator · Ručno provereno: ${kind==='sale'?'prodaja':'puna refundacija'} ${pfr}; ${cents/100} RSD; ${mode==='minimax'?'slanje iz Minimax-a evidentirano':'PDF sačuvan za slanje'}; razlog: ${reason.trim()}`,now));
+    .bind(order.id,`Administrator · ${evidence?'Ručna provera na portalu Poreske uprave; PIB '+FISCAL_TAXPAYER_ID:'Provera na portalu nije evidentirana (opciono)'}; ${kind==='sale'?'prodaja':'puna refundacija'} ${pfr}; ${cents/100} RSD; originalni PDF arhiviran; ${mode==='minimax'?'slanje iz Minimax-a evidentirano':'PDF sačuvan za slanje'}; razlog: ${reason.trim()}`,now));
   if(mode==='panel'){
     const payload={from:FROM_EMAIL,to:[recipient],reply_to:BUSINESS_EMAIL,subject:`${kind==='sale'?'Fiskalni račun':'Fiskalna refundacija'} za porudžbinu ${order.id}`,
       html:emailShell(`<h1>${kind==='sale'?'Fiskalni račun':'Puna refundacija'}</h1><p>U prilogu je fiskalni dokument za porudžbinu ${escapeHtml(order.id)}. PFR broj: ${escapeHtml(pfr)}.</p>`),
