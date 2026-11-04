@@ -96,7 +96,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
     const configPath=path.resolve(process.argv[2]);
     const config=JSON.parse(await fs.readFile(configPath,'utf8'));
     let input='';for await(const part of process.stdin){input+=part.toString('utf8');demand(input.length<=4096,'Neispravan unos kljuca.');}
-    const result=await downloadArchive({root:config.root,stateDirectory:path.dirname(configPath),token:JSON.parse(input).token});input='';
+    const result=await downloadArchive({root:config.root,stateDirectory:path.dirname(configPath),token:JSON.parse(input.replace(/^\uFEFF/,'')).token});input='';
     console.log(`Sacuvano novih PDF: ${result.downloaded}; provereno postojecih: ${result.verified}.`);
     if(result.incomplete||result.legacy){console.error(`POTREBNA DOPUNA: bez originala ${result.incomplete}; raniji dokumenti za povezivanje ${result.legacy}.`);process.exitCode=2;}
     console.log('Preuzimanje je zavrseno. Status OneDrive slanja proverite u OneDrive aplikaciji.');

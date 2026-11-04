@@ -8,7 +8,7 @@ $folder = Join-Path ([IO.Path]::GetTempPath()) ('at-archive-windows-' + [guid]::
 New-Item -ItemType Directory -Path $folder | Out-Null
 try {
     Copy-Item -LiteralPath 'tools/fiscal-archive/run.ps1' -Destination $folder
-    $credential = 'SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789'
+    $credential = 'SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789' + [char]0x010d
     $secure = ConvertTo-SecureString $credential -AsPlainText -Force
     $secure | Export-Clixml -LiteralPath (Join-Path $folder 'archive-key.xml')
     $stored = Get-Content -Raw -LiteralPath (Join-Path $folder 'archive-key.xml')
@@ -18,7 +18,7 @@ try {
     @'
 let data='';for await(const chunk of process.stdin)data+=chunk.toString('utf8');
 const token=JSON.parse(data).token;
-if(token!=='SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789')process.exit(4);
+if(token!=='SYNTHETIC-READ-ONLY-ARCHIVE-SECRET-123456789'+String.fromCharCode(269))process.exit(4);
 if(process.argv.some(v=>v.includes(token)))process.exit(5);
 console.log('PASS hidden stdin credential');
 '@ | Set-Content -LiteralPath (Join-Path $folder 'download.mjs')

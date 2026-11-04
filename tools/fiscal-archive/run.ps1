@@ -12,13 +12,16 @@ try {
     }
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+    $previousOutputEncoding = $OutputEncoding
     try {
+        $OutputEncoding = New-Object Text.UTF8Encoding($false)
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
         $payload = @{ token = $plain } | ConvertTo-Json -Compress
         # Secret travels over stdin, never as a process argument or log entry.
         $payload | & $node (Join-Path $state 'download.mjs') $config
         $code = $LASTEXITCODE
     } finally {
+        $OutputEncoding = $previousOutputEncoding
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
         $plain = $null; $payload = $null; $secret = $null
     }
