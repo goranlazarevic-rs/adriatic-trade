@@ -1,5 +1,13 @@
 # SEO paket: objava i indeksiranje
 
+## Obim: isključivo SEO
+
+Koriste se postojeće stranice. Ne menjaju se vizual, raspored, vidljivi tekstovi,
+navigacija, fotografije, CSS ili JavaScript. U ovom paketu HTML izmene su samo
+unutar `<head>`: naslovi/opisi, social metadata, strukturirani podaci i Google
+verifikaciona oznaka. Katalog `/proizvodi.html` je ciljna postojeća stranica za
+upit „nerafinisana morska so“. Mapa sajta zadržava postojećih 16 URL-ova.
+
 ## Status
 
 Paket je pripremljen na zasebnoj razvojnoj grani. U Google Search Console-u
@@ -17,8 +25,9 @@ node scripts/build-web.mjs
 python3 scripts/check-seo.py --root .web-dist
 ```
 
-Sačekati uspešne obavezne CI provere i pregledati novu stranicu, početnu i jednu
-stranicu proizvoda. Proveriti da su broj i veličine pakovanja i cene usklađeni sa
+Sačekati uspešne obavezne CI provere i uporediti sadržaj svih HTML stranica posle
+`</head>` sa početnim stanjem. Proveriti i da nema izmena CSS/JavaScript resursa.
+Proveriti da su broj i veličine pakovanja i cene u SEO podacima usklađeni sa
 važećom deklaracijom i cenovnikom. Ne dodavati tvrdnje „bez aditiva“, „nejodirana“
 ili zdravstvene tvrdnje bez odgovarajućih podataka za seriju za Srbiju.
 
@@ -49,11 +58,11 @@ Koristiti postojeće verifikovano vlasništvo ako postoji. Ako ne postoji,
 verifikovati `adriatictrade.rs` pomoću vrednosti koju Google izda vlasniku; ne
 izmišljati verifikacione kodove i ne menjati mail/DNS zapise radi druge svrhe.
 
-1. URL Inspection → testirati početnu, novu kategoriju i tri stranice soli.
+1. URL Inspection → testirati početnu, postojeći katalog i tri stranice soli.
 2. Zabeležiti rezultat indeksiranja, Google canonical i poslednje preuzimanje.
 3. Ako prijavi prepreku, rešiti konkretan razlog pre traženja indeksiranja.
 4. Sitemaps → prijaviti `https://adriatictrade.rs/sitemap.xml` i proveriti rezultat.
-5. Request indexing za početnu i novu kategoriju, zatim po potrebi za proizvode.
+5. Request indexing za početnu i postojeći katalog, zatim po potrebi za proizvode.
 6. U Rich Results Test proveriti jedan proizvod i breadcrumbs. Ispraviti
    obavezne greške; opcionalna upozorenja ne rešavati izmišljanjem zaliha/ocena.
 
@@ -64,7 +73,7 @@ Indexing API za obične stranice proizvoda.
 ## 4. Bing i drugi izvori
 
 U [Bing Webmaster Tools](https://www.bing.com/webmasters/) proveriti postojeće
-vlasništvo, prijaviti sitemap i zatražiti indeksiranje nove kategorije. Import iz
+vlasništvo, prijaviti sitemap i zatražiti indeksiranje postojećeg kataloga. Import iz
 Google naloga raditi samo u nalogu vlasnika i nakon odobrenja traženih pristupa.
 IndexNow se može naknadno povezati uz ispravno postavljen verifikacioni ključ;
 prijem IndexNow zahteva nije garancija indeksiranja i ne predstavlja prijavu
@@ -72,7 +81,7 @@ Google-u.
 
 Proveriti spoljne veze koje već postoje (Instagram/profil firme i proizvođač).
 Predlog za proizvođača je link sa njegovog spiska distributera na srpsku
-kategoriju/prodavnicu. Slanje zahteva proizvođaču ili objava na tuđim kanalima
+prodavnicu. Slanje zahteva proizvođaču ili objava na tuđim kanalima
 nisu deo izvršene izmene i zahtevaju zasebnu instrukciju korisnika.
 
 ## 5. Praćenje i odgovornost
