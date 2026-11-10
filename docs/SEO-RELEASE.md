@@ -10,12 +10,59 @@ upit „nerafinisana morska so“. Mapa sajta zadržava postojećih 16 URL-ova.
 
 ## Status
 
-Paket je pripremljen na zasebnoj razvojnoj grani. U Google Search Console-u
-naloga vlasnika dodato je URL-prefix svojstvo `https://adriatictrade.rs/`.
-Originalna meta oznaka koju je Google izdao nalazi se u `index.html`;
-vlasništvo još nije potvrđeno i sitemap nije prijavljen. Produkcija i `main` se menjaju
-tek uz odobrenje konkretnog PR-a i objave, prema postojećem dogovoru. Rad na SEO
-ne podrazumeva otvaranje prodaje, promenu Minimax režima ili objavu order Workera.
+### Objavljeno 10.11.2026: PR #31
+
+- Produkcioni `main`: `56f935842b7b7ef8e4fc893d3cbc24a6e5b3011c`.
+- [Hosting objava 42901925788, pokušaj 2](https://github.com/goranlazarevic-rs/adriatic-trade/actions/runs/42901925788/attempts/2): uspešna; isti SHA potvrđen na custom domenu i workers.dev.
+- Google URL-prefix svojstvo `https://adriatictrade.rs/` verifikovano originalnom meta oznakom u `index.html`.
+- Sitemap `https://adriatictrade.rs/sitemap.xml`: **Success, 16 discovered pages**.
+- Početna i katalog: **URL is on Google**; zasebni zahtevi za novo indeksiranje prihvaćeni.
+- Performance izveštaj još obrađuje podatke; trenutno nema osnova za zaključak o promeni pozicije.
+
+### Dodatna provera proizvoda 10.11.2026.
+
+Rezultati iz vlasničkog Google URL Inspection-a, a ne procena pomoću `site:` upita.
+Za svih pet URL-ova preuzimanje je uspešno, crawl/indexing dozvoljeni,
+Google-selected canonical je sam provereni URL.
+
+| Stranica u `/proizvodi/` | Google status | Poslednji crawl prikazan u alatu |
+| --- | --- | --- |
+| `cvet-soli-100g.html` | URL is on Google / Page is indexed | 04.11.2026. 07:39:01 |
+| `cvet-soli-125g.html` | URL is on Google / Page is indexed | 20.10.2026. 11:43:56 |
+| `nerafinisana-sitna-600g.html` | URL is on Google / Page is indexed | 04.11.2026. 17:38:47 |
+| `nerafinisana-krupna-600g.html` | URL is on Google / Page is indexed | 21.10.2026. 08:18:49 |
+| `nerafinisana-sitna-500g.html` | URL is on Google / Page is indexed | 20.10.2026. 11:15:57 |
+
+Za 500 g samo polje Sitemaps prikazuje `Temporary processing error`; stranica
+je indeksirana, Google canonical ispravan, a mapa sajta globalno prihvaćena.
+To nije nalaz da je proizvod isključen iz indeksa.
+
+Google Rich Results Test uspešno je preuzeo obe **trenutno objavljene** stranice:
+
+- [Cvet soli 100 g — Google rezultat](https://search.google.com/test/rich-results/result?id=fxhvHREfZyAUS0TworKBLA): **3 valid items**, Product snippets, Merchant listings i Breadcrumbs.
+- [Cvet soli 125 g — Google rezultat](https://search.google.com/test/rich-results/result?id=Hicj3TUZQ21RZrGddibLxw): **3 valid items**, iste tri vrste.
+- Potvrđeni SKU, fotografija i cena: `10086` / 600 RSD i `10012` / 800 RSD.
+- Merchant listings ima samo tri opcione preporuke: `shippingDetails`, `availability`, `hasMerchantReturnPolicy`. Nema obaveznih grešaka.
+- Dostupnost se ne izmišlja: prodajna pauza i zalihe zavise od živog sistema.
+  Uslovi dostave/povraćaja mogu se strukturirati kada su konačno potvrđeni i usklađeni sa vidljivim pravilima.
+
+### Pripremljeno za zasebno odobrenje i objavu
+
+Nova grana `seo/cvet-soli-products-20261110` menja samo `<head>` dve postojeće
+stranice cveta soli: ciljani title/meta opis i Open Graph, usklađeni opis u
+JSON-LD i veze `WebPage.mainEntity` / `Product.mainEntityOfPage`.
+Opis navodi postojeće cene sa PDV-om i dostavu u Srbiji. Pri promeni cena
+uskladiti i ove opise, pored postojećeg Offer-a i kataloga.
+
+Svih 24 HTML tela i svih 10 CSS/JavaScript datoteka ostaju identični objavljenom
+SHA-u. Nema nove stranice, vidljivog teksta, navigacije, slike ili promene korpe.
+Lokalni i izgrađeni SEO audit prolaze za 16 stranica.
+
+Ove dodatne dorade još nisu objavljene niti predstavljene kao Google-om
+preuzeta nova verzija. Posle odobrenja konkretnog PR-a i objave ponoviti URL
+proveru dva cveta soli i zatražiti osvežavanje. Ne ponavljati zahteve pre objave.
+Rad na SEO ne podrazumeva otvaranje prodaje, promenu Minimax režima ili objavu
+order Workera. Link sa sajta Solane Nin čeka dogovor vlasnika.
 
 ## 1. Provere pre objave
 
@@ -42,9 +89,11 @@ Workera, migracija D1, DNS izmena ili aktiviranje prijema porudžbina.
 
 Posle objave:
 
-```sh
-python3 scripts/check-seo.py --live-base https://adriatictrade.rs
-```
+Ako javni origin prihvata read-only audit klijent, opciono pokrenuti
+`python3 scripts/check-seo.py --live-base https://adriatictrade.rs`.
+Dana 10.11.2026. Cloudflare je tom klijentu vratio 403/1010; ne zaobilaziti
+zaštitu promenom identiteta klijenta. Živu proveru tada raditi kroz pravi
+browser i Google live alate, uz lokalni audit izlaza za objavu.
 
 Proveriti i `/hosting-status.json` za odobreni SHA, HTTPS, stvarni status
 `/robots.txt` i `/sitemap.xml`, kao i ponašanje nepostojećeg URL-a (404).

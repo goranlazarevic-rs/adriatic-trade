@@ -10,7 +10,8 @@
 | nerafinisana sitna morska so 600 g | `/proizvodi/nerafinisana-sitna-600g.html` |
 | nerafinisana krupna morska so 600 g | `/proizvodi/nerafinisana-krupna-600g.html` |
 | nerafinisana sitna morska so 500 g kutija | `/proizvodi/nerafinisana-sitna-500g.html` |
-| cvet soli 100 g / 125 g | Odgovarajuća postojeća stranica proizvoda |
+| cvet soli; cvet soli Solana Nin; cena u Srbiji | `/proizvodi/cvet-soli-125g.html` |
+| cvet soli 100 g; natron kesa | `/proizvodi/cvet-soli-100g.html` |
 | poreklo i proces proizvodnje | `/solana-nin.html` |
 
 SEO se sprovodi na postojećim stranicama. Vizual, raspored, vidljivi tekstovi,
@@ -39,10 +40,14 @@ Ne dodavati skriveni tekst, lažne ocene ili zdravstvena obećanja.
 
 Postupak i merila: [SEO-RELEASE.md](docs/SEO-RELEASE.md).
 
-Objava koda nije dokaz indeksiranja. U ovoj grani nisu prijavljeni sitemap ili
-URL-ovi kroz Google Search Console/Bing nalog. Google URL-prefix svojstvo je dodato u nalogu vlasnika, a originalna HTML
-oznaka verifikacije pripremljena je u početnoj stranici. Vlasništvo još nije
-potvrđeno jer oznaka nije objavljena. Pristup Bing nalogu nije potvrđen. Nije kupljeno oglašavanje i nije ugovoren nijedan spoljni link.
+SEO paket PR #31 objavljen je 10.11.2026. Google vlasništvo je potvrđeno,
+sitemap prihvaćen (16 stranica), a osvežavanje početne i kataloga zatraženo.
+URL Inspection potvrđuje da su svih pet pojedinačnih proizvoda već indeksirani,
+sa sopstvenim Google canonical adresama. Oba cveta soli prolaze Rich Results Test.
+Tačni rezultati i razlika između objavljenog paketa i novih pripremljenih dorada
+nalaze se u [evidenciji objave](docs/SEO-RELEASE.md#status).
+Pristup Bing nalogu nije potvrđen. Nije kupljeno oglašavanje i nije ugovoren
+spoljni link. Link sa sajta Solane Nin vlasnik tek treba da dogovori.
 
 ## Izvori za proveru sadržaja i tehnike
 
