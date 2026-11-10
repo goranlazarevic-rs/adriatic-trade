@@ -6,6 +6,13 @@ on:
     branches: [main]
     paths:
       - "index.html"
+      - "**/*.html"
+      - "assets/css/**"
+      - "robots.txt"
+      - "sitemap.xml"
+      - "scripts/check-seo.py"
+      - "SEO-PLAN.md"
+      - "docs/SEO-RELEASE.md"
       - "kontakt.html"
       - "saradnja.html"
       - "kontakt-hvala.html"
@@ -54,6 +61,13 @@ on:
     branches: [main]
     paths:
       - "index.html"
+      - "**/*.html"
+      - "assets/css/**"
+      - "robots.txt"
+      - "sitemap.xml"
+      - "scripts/check-seo.py"
+      - "SEO-PLAN.md"
+      - "docs/SEO-RELEASE.md"
       - "kontakt.html"
       - "saradnja.html"
       - "kontakt-hvala.html"
@@ -166,6 +180,12 @@ jobs:
           node --test tests/minimax-draft.mjs tests/minimax-admin.mjs tests/minimax-stock.mjs tests/minimax-reservations.mjs tests/minimax-handoff.mjs
           node tests/minimax-staging-policy.mjs
           node tests/inquiry-security.mjs
+
+      - name: Validate search metadata and deployable pages
+        run: |
+          python3 scripts/check-seo.py
+          node scripts/build-web.mjs
+          python3 scripts/check-seo.py --root .web-dist
 
       - name: Install isolated integration test dependencies
         run: |
