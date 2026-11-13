@@ -13,6 +13,10 @@ test('all administrative emails follow persisted transitions, including courier 
   else if(action==='ship'){const fd=new FormData();fd.set('courier','Test kurir');fd.set('trackingNumber','TEST-1');response=await h.call(id,action,fd);}
   else response=await h.call(id,action,action==='local-schedule'?schedule:action==='local-payment'?{method:'bank_transfer'}:['cancel','reject'].includes(action)?{reasonCode:'customer_request'}:{});
   assert.equal(response.status,200,action);assert.equal((await response.json()).emailPending,false,action);assert.equal(h.state.emails.length,1,action);
+  const email=h.state.emails[0];assert.deepEqual(email.to,['test@example.com'],action);
+  assert.equal(email.reply_to,'webshop@adriatictrade.rs',action);
+  assert.equal(email.from,'Adriatic Trade <porudzbine@orders.adriatictrade.rs>',action);
+  assert.match(email.html,/mailto:webshop@adriatictrade\.rs/,action);
  }
 });
 test('outbox insert failure atomically rolls back state and audit without sending',async()=>{

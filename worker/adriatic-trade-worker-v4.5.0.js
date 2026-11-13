@@ -64,6 +64,7 @@ function currentProductPrice(sku, date = new Date()) {
 }
 
 const BUSINESS_EMAIL = "info@adriatictrade.rs";
+const WEBSHOP_EMAIL = "webshop@adriatictrade.rs";
 const FROM_EMAIL = "Adriatic Trade <porudzbine@orders.adriatictrade.rs>";
 const FREE_SHIPPING = 3500;
 const SHIPPING_FEE = 420;
@@ -276,7 +277,7 @@ async function handleCreateOrder(request, env, origin) {
   if (!emailState.business) {
     const businessResult = await sendEmail(env.RESEND_API_KEY, {
       from: FROM_EMAIL,
-      to: [BUSINESS_EMAIL],
+      to: [WEBSHOP_EMAIL],
       reply_to: order.customer.email,
       subject: `NOVA PORUDŽBINA ${order.id} · ${formatRsd(order.total)}`,
       html: businessEmailHtml(order),
@@ -304,7 +305,7 @@ async function handleCreateOrder(request, env, origin) {
     const customerResult = await sendEmail(env.RESEND_API_KEY, {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Porudžbina ${order.id} je primljena`,
       html: customerEmailHtml(order),
       tags: [
@@ -482,7 +483,7 @@ async function handleAdmin(request, env, url, origin) {
     const payment = body.method === "ips" ? LOCAL_PAYMENT_IPS : LOCAL_PAYMENT_BANK;
     if (payment === order.payment) return notificationResponse(env, order.id, origin, true);
     const payload = order.status === "confirmed" ? {
-      from: FROM_EMAIL, to: [order.customer.email], reply_to: BUSINESS_EMAIL,
+      from: FROM_EMAIL, to: [order.customer.email], reply_to: WEBSHOP_EMAIL,
       subject: `Uputstvo za uplatu na račun — ${order.id}`,
       html: emailShell(`<h1>Uplata za ličnu dostavu</h1><p>Za porudžbinu ${escapeHtml(order.id)} način plaćanja je promenjen u: ${escapeHtml(payment)}.</p>${bankTransferEmailHtml(order)}`)
     } : null;
@@ -537,7 +538,7 @@ async function handleAdmin(request, env, url, origin) {
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Dogovoren termin lične isporuke — ${order.id}`,
       html: localScheduleEmailHtml(order, { date, timeWindow, location }),
       tags: [
@@ -608,7 +609,7 @@ async function handleAdmin(request, env, url, origin) {
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Porudžbina ${order.id} je lično isporučena`,
       html: localDeliveredEmailHtml(order, !firstSaleEnabled(env) && Boolean(attachment || receiptKey)),
       tags: [{ name: "category", value: "local_delivery_delivered" }, { name: "order_id", value: order.id }]
@@ -737,7 +738,7 @@ async function handleAdmin(request, env, url, origin) {
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Porudžbina ${order.id} je potvrđena`,
       html: statusConfirmedEmailHtml(order, qrAttached),
       attachments,
@@ -775,7 +776,7 @@ async function handleAdmin(request, env, url, origin) {
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Porudžbina ${order.id} nije potvrđena`,
       html: statusRejectedEmailHtml(order, decision.data),
       tags: [
@@ -812,7 +813,7 @@ async function handleAdmin(request, env, url, origin) {
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Porudžbina ${order.id} je otkazana`,
       html: statusCancelledEmailHtml(order, decision.data),
       tags: [
@@ -912,7 +913,7 @@ async function handleAdmin(request, env, url, origin) {
     const payload = {
       from: FROM_EMAIL,
       to: [order.customer.email],
-      reply_to: BUSINESS_EMAIL,
+      reply_to: WEBSHOP_EMAIL,
       subject: `Porudžbina ${order.id} je poslata`,
       html: shippedHtml,
       tags: [
@@ -1358,7 +1359,7 @@ function statusConfirmedEmailHtml(order, qrAttached = false) {
       <strong style="display:block;color:#10283d;margin-bottom:4px;">Dokumentacija za kupovinu na daljinu</strong>
       U prilogu ovog emaila dostavljamo <strong>Obaveštenje o uslovima prodaje na daljinu</strong> i propisani <strong>Obrazac za odustanak od ugovora</strong>. Sačuvajte ih zajedno sa ovom potvrdom porudžbine.
     </div>
-    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Ako imate pitanje, odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Ako imate pitanje, odgovorite na ovaj email ili pišite na <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;">${WEBSHOP_EMAIL}</a>.</p>
   `);
 }
 
@@ -1387,7 +1388,7 @@ function statusShippedEmailHtml(order, shipment) {
 
     ${customerDeliveryBlock(order)}
     ${receiptText}
-    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za pitanja u vezi sa porudžbinom odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za pitanja u vezi sa porudžbinom odgovorite na ovaj email ili pišite na <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;">${WEBSHOP_EMAIL}</a>.</p>
   `);
 }
 
@@ -1420,7 +1421,7 @@ function localDeliveredEmailHtml(order, hasReceipt) {
     <p style="margin:0 0 20px;color:#4f5c65;font-size:15px;line-height:1.65;">Hvala, ${escapeHtml(order.customer.firstName)}. Evidentirali smo da je porudžbina <strong>${escapeHtml(order.id)}</strong> lično preuzeta i plaćena.</p>
     ${summaryTable(customerOrderRows(order), order)}
     ${hasReceipt ? `<p style="margin:18px 0 0;color:#4f5c65;font-size:13px;line-height:1.6;"><strong>Fiskalni račun je u prilogu ovog emaila.</strong></p>` : ""}
-    <p style="margin:20px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za pitanja odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+    <p style="margin:20px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za pitanja odgovorite na ovaj email ili pišite na <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;">${WEBSHOP_EMAIL}</a>.</p>
   `);
 }
 
@@ -1468,7 +1469,7 @@ function statusRejectedEmailHtml(order, decision) {
     <div style="margin:24px 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8b7650;font-weight:700;">Pregled porudžbine</div>
     ${summaryTable(rows, order)}
     ${order.payment && order.payment.toLowerCase().includes("pouze") ? `<div style="margin-top:18px;padding:15px 17px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:13px;line-height:1.6;">Plaćanje je bilo predviđeno <strong>pouzećem</strong>, zato po ovoj porudžbini nije izvršena naplata.</div>` : ""}
-    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Ako imate pitanje ili želite da proverimo drugu opciju, odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Ako imate pitanje ili želite da proverimo drugu opciju, odgovorite na ovaj email ili pišite na <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;">${WEBSHOP_EMAIL}</a>.</p>
   `);
 }
 
@@ -1482,7 +1483,7 @@ function statusCancelledEmailHtml(order, decision) {
     <div style="margin:24px 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8b7650;font-weight:700;">Pregled otkazane porudžbine</div>
     ${summaryTable(rows, order)}
     ${order.payment && order.payment.toLowerCase().includes("pouze") ? `<div style="margin-top:18px;padding:15px 17px;background:#f7f5f0;border-radius:12px;color:#4f5c65;font-size:13px;line-height:1.6;">Plaćanje je bilo predviđeno <strong>pouzećem</strong>, zato po ovoj porudžbini nije izvršena naplata.</div>` : ""}
-    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za dodatne informacije odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+    <p style="margin:22px 0 0;color:#69747c;font-size:13px;line-height:1.6;">Za dodatne informacije odgovorite na ovaj email ili pišite na <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;">${WEBSHOP_EMAIL}</a>.</p>
   `);
 }
 
@@ -2131,7 +2132,7 @@ function customerEmailHtml(order) {
         : `Paketomat · ${escapeHtml(order.delivery.postalCode)} ${escapeHtml(order.delivery.city)}. Kurirska služba može poslati SMS/Viber poruku ili link za izbor dostupne lokacije.`}
     </div>
 
-    <p style="margin:24px 0 0;color:#69747c;line-height:1.6;font-size:13px;">Ako imate pitanje u vezi sa porudžbinom, odgovorite na ovaj email ili pišite na <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;">${BUSINESS_EMAIL}</a>.</p>
+    <p style="margin:24px 0 0;color:#69747c;line-height:1.6;font-size:13px;">Ako imate pitanje u vezi sa porudžbinom, odgovorite na ovaj email ili pišite na <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;">${WEBSHOP_EMAIL}</a>.</p>
 
     ${customerBrandBlock()}
   `);
@@ -2228,7 +2229,7 @@ function emailShell(content) {
         <div style="padding:16px 22px;background:#f7f5f0;color:#70777c;font-size:12px;line-height:1.7;">
           <strong style="color:#4f5c65;">Adriatic Trade d.o.o.</strong><br>
           Cvetna 6, 21208 Sremska Kamenica<br>
-          <a href="mailto:${BUSINESS_EMAIL}" style="color:#0e3f67;text-decoration:none;">${BUSINESS_EMAIL}</a> · <a href="tel:+381652169764" style="color:#0e3f67;text-decoration:none;">+381 65 216 9764</a><br>
+          <a href="mailto:${WEBSHOP_EMAIL}" style="color:#0e3f67;text-decoration:none;">${WEBSHOP_EMAIL}</a> · <a href="tel:+381652169764" style="color:#0e3f67;text-decoration:none;">+381 65 216 9764</a><br>
           <a href="https://www.adriatictrade.rs" style="color:#0e3f67;">www.adriatictrade.rs</a>
         </div>
       </div>
@@ -2992,7 +2993,7 @@ async function handleFiscal(request,env,order,origin) {
   statements.push(env.DB.prepare("INSERT INTO order_events(order_id,event_type,note,created_at) VALUES(?,'fiscal_recorded',?,?)")
     .bind(order.id,`Administrator · ${evidence?'Ručna provera na portalu Poreske uprave; PIB '+FISCAL_TAXPAYER_ID:'Provera na portalu nije evidentirana (opciono)'}; ${kind==='sale'?'prodaja':'puna refundacija'} ${pfr}; ${cents/100} RSD; originalni PDF arhiviran; ${mode==='minimax'?'slanje iz Minimax-a evidentirano':'PDF sačuvan za slanje'}; razlog: ${reason.trim()}`,now));
   if(mode==='panel'){
-    const payload={from:FROM_EMAIL,to:[recipient],reply_to:BUSINESS_EMAIL,subject:`${kind==='sale'?'Fiskalni račun':'Fiskalna refundacija'} za porudžbinu ${order.id}`,
+    const payload={from:FROM_EMAIL,to:[recipient],reply_to:WEBSHOP_EMAIL,subject:`${kind==='sale'?'Fiskalni račun':'Fiskalna refundacija'} za porudžbinu ${order.id}`,
       html:emailShell(`<h1>${kind==='sale'?'Fiskalni račun':'Puna refundacija'}</h1><p>U prilogu je fiskalni dokument za porudžbinu ${escapeHtml(order.id)}. PFR broj: ${escapeHtml(pfr)}.</p>`),
       attachments:[{filename,r2Key:key}],tags:[{name:'category',value:'fiscal_document'},{name:'order_id',value:order.id}]};
     statements.push(env.DB.prepare('INSERT INTO notification_outbox(operation_key,order_id,payload_json,metadata_json,created_at) VALUES(?,?,?,?,?)').bind(notificationKey,order.id,JSON.stringify(payload),JSON.stringify({fiscalKind:kind}),now));

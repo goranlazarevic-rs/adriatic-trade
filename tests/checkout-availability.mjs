@@ -41,6 +41,11 @@ test('available product accepted at boundary; quota, order and audit committed o
  const h=setup({quantity:2}),b=body([{sku:'10306',qty:2,remaining:999,unitPrice:1}]);b.stock=999;b.salesEnabled=true;
  const r=await call(h,b);assert.equal(r.status,201);assert.equal((await r.json()).total,1018);assert.equal(remaining(h),0);assert.equal(count(h),1);
  assert.equal(h.sql.prepare('SELECT COUNT(*) n FROM checkout_admissions').get().n,1);assert.equal(h.sql.prepare("SELECT COUNT(*) n FROM order_events WHERE event_type='created'").get().n,1);assert.equal(h.state.emails.length,2);
+ const [business,customer]=h.state.emails;
+ assert.deepEqual(business.to,['webshop@adriatictrade.rs']);assert.equal(business.reply_to,b.customer.email);
+ assert.deepEqual(customer.to,[b.customer.email]);assert.equal(customer.reply_to,'webshop@adriatictrade.rs');
+ for(const email of [business,customer])assert.equal(email.from,'Adriatic Trade <porudzbine@orders.adriatictrade.rs>');
+ assert.match(customer.html,/mailto:webshop@adriatictrade\.rs/);
  const retry=await call(h,b);assert.equal(retry.status,200);assert.equal((await retry.json()).duplicate,true);assert.equal(remaining(h),0);assert.equal(h.state.emails.length,2);
 });
 test('unavailable, zero and insufficient quantity reject the whole basket without quota debit or email',async()=>{
