@@ -31,6 +31,7 @@ test('PDF -> durable one email -> accepted -> shipment; repeats keep same PFR/fi
   const h=await firstSaleHarness(),form=await fiscalForm(h);const initial=await record(h,form);assert.equal(initial.status,200);
   let order=(await initial.json()).order;assert.equal(order.fiscalControl.sale.evidence,'operator_attestation');assert.equal(order.fiscalControl.sale.deliveryStatus,'accepted');assert.equal(order.fiscalControl.ready,true);
   assert.equal(order.status,'confirmed');assert.equal(h.state.emails.length,1);assert.equal(h.state.emails[0].to[0],order.customer.email);assert.equal(h.state.emails[0].attachments.length,1);
+  assert.equal(h.state.emails[0].reply_to,'webshop@adriatictrade.rs');assert.match(h.state.emails[0].html,/mailto:webshop@adriatictrade\.rs/);
   const key=h.state.emailKeys[0],files=[...h.receiptFiles.keys()];
   for(let i=0;i<4;i++)assert.equal((await record(h,form)).status,200);
   assert.equal(h.state.emails.length,1);assert.deepEqual([...h.receiptFiles.keys()],files);assert.equal(h.sql.prepare('SELECT count(*) n FROM fiscal_documents').get().n,1);
