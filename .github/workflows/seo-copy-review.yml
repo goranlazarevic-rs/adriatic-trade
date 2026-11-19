@@ -1,0 +1,51 @@
+name: One-off SEO copy visual review
+on:
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/seo-copy-review.yml, .github/qa/seo-copy-review.cjs]
+permissions:
+  contents: read
+jobs:
+  visual-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/seo-browser" --no-audit --no-fund playwright@1.62.1
+          "$RUNNER_TEMP/seo-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Compare original and revised pages without production requests
+        env:
+          PLAYWRIGHT_MODULE_PATH: ${{ runner.temp }}/seo-browser/node_modules/playwright
+          QA_OUTPUT_ROOT: ${{ runner.temp }}/seo-copy-review
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 > "$RUNNER_TEMP/seo-http.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID"' EXIT
+          node <<'JS'
+          const fs=require('node:fs');
+          const {execFileSync}=require('node:child_process');
+          const pages=['index.html','proizvodi.html','proizvodi/nerafinisana-sitna-600g.html','proizvodi/nerafinisana-krupna-600g.html','proizvodi/nerafinisana-sitna-500g.html','proizvodi/cvet-soli-100g.html','proizvodi/cvet-soli-125g.html'];
+          const revised=new Map(pages.map(file=>[file,fs.readFileSync(file)]));
+          try {
+            for(const file of pages)fs.writeFileSync(file,execFileSync('git',['show','8304bc3e3c7c925f7e725646a38daff9a16d9cde:'+file]));
+            execFileSync('node',['.github/qa/seo-copy-review.cjs','before'],{stdio:'inherit'});
+          } finally {for(const [file,content] of revised)fs.writeFileSync(file,content);}
+          execFileSync('node',['.github/qa/seo-copy-review.cjs','after'],{stdio:'inherit'});
+          fs.writeFileSync(process.env.QA_OUTPUT_ROOT+'/revision.txt','SEO source: 5df4959e6f0b69f92aa65f2c9bfb096c1b7006e2\nBaseline: 8304bc3e3c7c925f7e725646a38daff9a16d9cde\n');
+          JS
+      - name: Preserve review screenshots and geometry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seo-copy-review
+          path: ${{ runner.temp }}/seo-copy-review
+          retention-days: 30
+          if-no-files-found: error
