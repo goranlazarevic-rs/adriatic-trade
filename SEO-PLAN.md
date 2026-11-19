@@ -14,8 +14,10 @@
 | cvet soli 100 g; natron kesa | `/proizvodi/cvet-soli-100g.html` |
 | poreklo i proces proizvodnje | `/solana-nin.html` |
 
-SEO se sprovodi na postojećim stranicama. Vizual, raspored, vidljivi tekstovi,
-navigacija, fotografije i funkcije korpe ostaju identični početnom stanju.
+SEO se sprovodi na postojećim stranicama. Vizual, raspored, navigacija,
+fotografije i funkcije korpe ostaju nepromenjeni. PR #31 i #32 menjali su samo
+SEO podatke; korisnik je 19.11.2026. odobrio i ciljane dorade vidljivih tekstova,
+uz očuvanje kvaliteta opisa i prirodnog tona.
 Ne dodavati novu kategoriju niti stranicu za pojedinačne ključne reči.
 Ne dodavati skriveni tekst, lažne ocene ili zdravstvena obećanja.
 
@@ -48,6 +50,24 @@ Tačni rezultati i razlika između objavljenog paketa i novih pripremljenih dora
 nalaze se u [evidenciji objave](docs/SEO-RELEASE.md#status).
 Pristup Bing nalogu nije potvrđen. Nije kupljeno oglašavanje i nije ugovoren
 spoljni link. Link sa sajta Solane Nin vlasnik tek treba da dogovori.
+
+## Odobrene tekstualne dorade 19.11.2026.
+
+- Katalog: H1 „Nerafinisana morska so i cvet soli Solane Nin“ i uvod koji
+  razlikuje so za pripremu hrane od cveta soli za završno začinjavanje.
+- Početna: H1 „Nerafinisana so. Rođena iz Jadrana.“ zadržava poruku o poreklu;
+  podnaslov „Nerafinisana morska so i cvet soli Solane Nin.“ precizira ponudu.
+  Ostaju priča o četiri elementa, ručnoj berbi i Ninu, kao i distributerska poruka.
+- Svih pet proizvoda: postojeći H1, gramaža i vrsta pakovanja ostaju;
+  uvodi povezuju proizvođača, način upotrebe i praktičnu razliku pakovanja.
+- Kratki opisi usklađeni su na početnoj, u katalogu i među povezanim proizvodima.
+- Tvrdnje „bez aditiva“ i isticanje minerala u ovih sedam stranica zamenjeni su
+  opisima sakupljanja, kristala i upotrebe, bez novih zdravstvenih obećanja.
+- Nema promene CSS-a, JavaScript-a, HTML strukture, kupovnih atributa,
+  fotografija, putanja, cena, dostave, SEO metadata ili strukturiranih podataka.
+
+Status ove dorade, provere i ograničenja navesti u evidenciji objave. Izmena
+izvornog koda nije potvrda produkcione objave niti novog Google preuzimanja.
 
 ## Izvori za proveru sadržaja i tehnike
 
