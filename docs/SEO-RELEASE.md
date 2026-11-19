@@ -2,13 +2,46 @@
 
 ## Obim: isključivo SEO
 
-Koriste se postojeće stranice. Ne menjaju se vizual, raspored, vidljivi tekstovi,
-navigacija, fotografije, CSS ili JavaScript. U ovom paketu HTML izmene su samo
-unutar `<head>`: naslovi/opisi, social metadata, strukturirani podaci i Google
-verifikaciona oznaka. Katalog `/proizvodi.html` je ciljna postojeća stranica za
-upit „nerafinisana morska so“. Mapa sajta zadržava postojećih 16 URL-ova.
+Koriste se postojeće stranice. PR #31 i #32 menjali su samo `<head>`:
+naslove/opise, social metadata, strukturirane podatke i Google verifikacionu
+oznaku. Korisnik je 19.11.2026. odobrio i ciljane dorade vidljivih tekstova.
+Vizual, raspored, navigacija, fotografije, CSS i JavaScript ostaju nepromenjeni.
+Katalog `/proizvodi.html` je ciljna postojeća stranica za upit „nerafinisana
+morska so“. Mapa sajta zadržava postojećih 16 URL-ova.
 
 ## Status
+
+### Tekstualne dorade 19.11.2026. — provere pre objave
+
+Osnova: `8304bc3e3c7c925f7e725646a38daff9a16d9cde` (PR #33, webshop sanduče).
+Menjaju se samo tekstovi početne, kataloga i pet postojećih proizvoda.
+Katalog dobija konkretan H1; početna zadržava poruku „Rođena iz Jadrana“.
+Uvodi objašnjavaju poreklo, upotrebu i pakovanje; kratki opisi su usklađeni i
+među povezanim proizvodima. Nepotvrđeni prodajni argumenti o aditivima i
+mineralima na ovim stranicama zamenjeni su opisima sakupljanja i upotrebe.
+
+Lokalni SEO audit prolazi za svih 16 stranica, i na izvoru i na `.web-dist`.
+Nema izmena CSS-a, JavaScript-a, HTML strukture, navigacije, fotografija,
+prodajnih atributa, cena, dostave, metadata, canonical adresa ili JSON-LD.
+[Puna regresija PR-a #34](https://github.com/goranlazarevic-rs/adriatic-trade/actions/runs/44478819972)
+uspešno je završena za reviziju `5df4959e6f0b69f92aa65f2c9bfb096c1b7006e2`.
+Prošli su SEO audit, prodajni tokovi, runtime i browser regresije i release kontrole.
+
+Lokalni browser nije dostupan, pa je poređenje pre/posle izvršeno u izdvojenom
+GitHub runneru, bez produkcionih zahteva, porudžbina ili tajni.
+[Jednokratna vizuelna provera](https://github.com/goranlazarevic-rs/adriatic-trade/actions/runs/44500560954)
+uspešno je završena: sedam stranica na širinama 320, 390, 768 i 1440 px,
+odnosno 28 prikaza po verziji; sačuvano je 28 PNG snimaka na 390 i 1440 px.
+Nema horizontalnog prelivanja, neispravnih slika ili JavaScript grešaka.
+Provereni su dodavanje u lokalnu korpu, iznos robe i dostave i mobilni meni.
+Snimci su pregledani: zadržani su stil, slike, navigacija i redosled sadržaja;
+visina pojedinih blokova prirodno prati novi tekst. Na širini 320 px početni
+blok raste sa 660 na približno 688 px, bez odsecanja sadržaja.
+Pomoćna QA grana iz PR-a #35 ne ulazi u paket za spajanje.
+
+Ovaj zapis beleži stanje pre produkcione objave. Konačan status spajanja,
+objave i odobrene revizije pratiti u [PR-u #34](https://github.com/goranlazarevic-rs/adriatic-trade/pull/34).
+Novi Google crawl, indeksiranje ili pozicija nisu potvrđeni ovim proverama.
 
 ### Objavljeno 10.11.2026: PR #31
 
@@ -72,8 +105,10 @@ node scripts/build-web.mjs
 python3 scripts/check-seo.py --root .web-dist
 ```
 
-Sačekati uspešne obavezne CI provere i uporediti sadržaj svih HTML stranica posle
-`</head>` sa početnim stanjem. Proveriti i da nema izmena CSS/JavaScript resursa.
+Sačekati uspešne obavezne CI provere i pregledati razlike HTML stranica prema
+početnom stanju. Za tekstualnu doradu dozvoljene su samo odobrene izmene teksta
+i pratećih pristupačnih opisa; struktura elemenata i funkcionalni atributi
+ostaju isti. Proveriti i da nema izmena CSS/JavaScript resursa.
 Proveriti da su broj i veličine pakovanja i cene u SEO podacima usklađeni sa
 važećom deklaracijom i cenovnikom. Ne dodavati tvrdnje „bez aditiva“, „nejodirana“
 ili zdravstvene tvrdnje bez odgovarajućih podataka za seriju za Srbiju.
