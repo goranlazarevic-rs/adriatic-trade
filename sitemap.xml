@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://adriatictrade.rs/</loc></url>
-  <url><loc>https://adriatictrade.rs/proizvodi.html</loc></url>
-  <url><loc>https://adriatictrade.rs/solana-nin.html</loc></url>
-  <url><loc>https://adriatictrade.rs/o-nama.html</loc></url>
+  <url><loc>https://adriatictrade.rs/</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/proizvodi.html</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/solana-nin.html</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/o-nama.html</loc><lastmod>2026-11-19</lastmod></url>
   <url><loc>https://adriatictrade.rs/saradnja.html</loc></url>
   <url><loc>https://adriatictrade.rs/kontakt.html</loc></url>
   <url><loc>https://adriatictrade.rs/dostava-placanje.html</loc></url>
@@ -11,9 +11,9 @@
   <url><loc>https://adriatictrade.rs/reklamacije-povracaj.html</loc></url>
   <url><loc>https://adriatictrade.rs/odustanak.html</loc></url>
   <url><loc>https://adriatictrade.rs/politika-privatnosti.html</loc></url>
-  <url><loc>https://adriatictrade.rs/proizvodi/cvet-soli-100g.html</loc></url>
-  <url><loc>https://adriatictrade.rs/proizvodi/cvet-soli-125g.html</loc></url>
-  <url><loc>https://adriatictrade.rs/proizvodi/nerafinisana-sitna-600g.html</loc></url>
-  <url><loc>https://adriatictrade.rs/proizvodi/nerafinisana-krupna-600g.html</loc></url>
-  <url><loc>https://adriatictrade.rs/proizvodi/nerafinisana-sitna-500g.html</loc></url>
+  <url><loc>https://adriatictrade.rs/proizvodi/cvet-soli-100g.html</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/proizvodi/cvet-soli-125g.html</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/proizvodi/nerafinisana-sitna-600g.html</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/proizvodi/nerafinisana-krupna-600g.html</loc><lastmod>2026-11-19</lastmod></url>
+  <url><loc>https://adriatictrade.rs/proizvodi/nerafinisana-sitna-500g.html</loc><lastmod>2026-11-19</lastmod></url>
 </urlset>
