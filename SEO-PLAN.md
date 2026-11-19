@@ -33,7 +33,8 @@ Ne dodavati skriveni tekst, lažne ocene ili zdravstvena obećanja.
 - Uklonjena neproverena fiksna tvrdnja `InStock`; žive kvote i pauza prijema ostaju
   pod kontrolom postojećeg sistema. Dostupnost ponovo dodati u statičke podatke
   samo uz pouzdan proces sinhronizacije sa stvarnom prodajnom dostupnošću.
-- Postojeći `sitemap.xml` i `robots.txt` ostaju nepromenjeni: 16 javnih stranica.
+- `sitemap.xml` zadržava 16 javnih stranica; `lastmod` beleži stvarne značajne
+  izmene, a `robots.txt` zadržava postojeća pravila.
 - `scripts/check-seo.py` u CI proverava i izvor i javni izlaz za objavu.
 - Provereno je da su svi HTML sadržaji posle `</head>`, kao i CSS i JavaScript
   resursi, identični početnom produkcionom stanju.
@@ -79,6 +80,33 @@ izvornog koda nije potvrda produkcione objave niti novog Google preuzimanja.
 - [Google – pravila strukturiranih podataka](https://developers.google.com/search/docs/appearance/structured-data/sd-policies)
 
 ## Merenje rezultata
+
+### Nastavak za upit „nerafinisana“ — 19.11.2026.
+
+Pripremljen je mali nastavak na objavljeni PR #34:
+
+- Početni SEO naslov povezuje brend i ponudu: „Adriatic Trade | Nerafinisana
+  morska so Solane Nin“. Open Graph naslov prati isti tekst.
+- Postojeći linkovi sa početne i stranice o poreklu jasnije opisuju katalog
+  nerafinisane morske soli; uvod kataloga navodi Adriatic Trade i Srbiju.
+- Postojeći tekst o kupovini na stranici „O nama“ povezuje brend i asortiman.
+- `lastmod` 19.11.2026. dodat je za četiri stranice iz ovog nastavka i pet
+  proizvoda čiji je sadržaj istog dana izmenjen objavljenim PR-om #34.
+  Datume ne osvežavati pri svakom buildu; menjati ih samo nakon stvarne
+  značajne izmene odgovarajuće stranice.
+
+Nisu dodate javne stranice. Struktura elemenata, stilovi, putanje, cene,
+prodajna dostupnost i integracije ostaju postojeći. Precizniji linkovi i naslovi
+nisu dokaz indeksiranja ili određene pozicije.
+
+Javna pretraga 19.11.2026. nije dala pouzdanu potvrdu pojavljivanja sajta za
+ciljane upite; to nije dokaz odsustva iz Google indeksa. Otvaranje Search Console
+blokirala je automatska provera zbog neodobrenog pristupa privatnim podacima
+naloga. Za pregled indeksiranja, poslednjeg preuzimanja, upita za Srbiju i
+eventualni zahtev za ponovno indeksiranje potrebna je izričita saglasnost.
+
+Status ovog nastavka i provera beleži se u odgovarajućem PR-u; ne smatrati ga
+objavljenim samo zato što je pripremljen u grani.
 
 U Search Console pratiti upite za nerafinisanu morsku so i Solanu Nin: prikaze,
 klikove, CTR i prosečnu poziciju, uz filter Srbija i ciljnu stranicu. U postojećoj
