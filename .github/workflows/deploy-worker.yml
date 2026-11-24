@@ -165,6 +165,7 @@ jobs:
 
       - name: Regression tests
         run: |
+          node --test tests/corporate-gifts.mjs tests/corporate-mailto.mjs
           node tests/admin-operations.mjs
           node tests/admin-availability.mjs
           node tests/local-delivery.mjs
