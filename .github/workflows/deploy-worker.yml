@@ -186,6 +186,7 @@ jobs:
           python3 scripts/check-seo.py
           node scripts/build-web.mjs
           python3 scripts/check-seo.py --root .web-dist
+          node --test tests/corporate-gifts.mjs tests/corporate-mailto.mjs
 
       - name: Install isolated integration test dependencies
         run: |

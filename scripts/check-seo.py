@@ -72,7 +72,9 @@ class Page(HTMLParser):
 
 
 def filename(url):
-    return urllib.parse.urlsplit(url).path.lstrip('/') or 'index.html'
+    path = urllib.parse.urlsplit(url).path
+    if path == '/korporativni-pokloni': return 'korporativni-pokloni.html'
+    return path.lstrip('/') or 'index.html'
 
 
 def graph_nodes(value):
